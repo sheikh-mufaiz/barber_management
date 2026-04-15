@@ -1,0 +1,18 @@
+const mongoose = require("mongoose");
+
+const bookingSchema = new mongoose.Schema({
+  barberId: String,
+  customerName: String,
+  orderId: String,
+  services: [String],
+  totalTime: Number,
+  startTime: Date,
+  isOffline: { type: Boolean, default: false },
+  endTime: Date,
+  status: {
+    type: String,
+    default: "booked"
+  }
+});
+
+module.exports = mongoose.model("Booking", bookingSchema);
