@@ -22,6 +22,20 @@ router.post("/book", async (req, res) => {
       });
     }
 
+    // 🔥 Check if customer already has active booking with this barber
+    if (customerId && !isOffline) {
+      const existingBooking = await Booking.findOne({
+        barberId,
+        customerId,
+        endTime: { $gt: new Date() } // Active booking (not ended)
+      });
+      if (existingBooking) {
+        return res.status(400).json({
+          message: "You already have an active booking with this barber"
+        });
+      }
+    }
+
     // 🔥 Get last booking
     const lastBooking = await Booking.findOne({ barberId })
       .sort({ endTime: -1 });

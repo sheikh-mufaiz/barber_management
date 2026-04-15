@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const bookingSchema = new mongoose.Schema({
   barberId: String,
+  customerId: String,
   customerName: String,
   orderId: String,
   services: [String],

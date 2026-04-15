@@ -42,7 +42,7 @@ function Booking() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [barberId]);
+  }, [barberId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 🔥 Toggle services
   const toggleService = (service) => {
@@ -69,12 +69,8 @@ function Booking() {
       0
     );
 
-    // ✅ FIXED DUPLICATE CHECK (old + new data)
-    const existing = bookings.find(
-      (b) =>
-        (b.customerId && b.customerId === user._id) ||
-        (!b.customerId && b.customerName === user.name)
-    );
+    // ✅ FIXED DUPLICATE CHECK (only by customerId)
+    const existing = bookings.find(b => b.customerId === user._id);
 
     if (existing) {
       const confirmBooking = window.confirm(
@@ -167,11 +163,7 @@ function Booking() {
           </p>
 
           {/* 🔥 WARNING UI */}
-          {bookings.some(
-            (b) =>
-              (b.customerId && b.customerId === user._id) ||
-              (!b.customerId && b.customerName === user.name)
-          ) && (
+          {bookings.some(b => b.customerId === user._id) && (
             <p style={{ color: "red" }}>
               ⚠️ You already have an active booking
             </p>
@@ -201,11 +193,9 @@ function Booking() {
                 )
               );
 
-              // ✅ Repeat logic (same as barber side)
+              // ✅ Repeat logic (only by customerId)
               const visitCount = bookings.filter(
-                (x) =>
-                  (x.customerId && x.customerId === b.customerId) ||
-                  (!x.customerId && x.customerName === b.customerName)
+                (x) => x.customerId === b.customerId
               ).length;
 
               return (
@@ -235,8 +225,7 @@ function Booking() {
                   )}
 
                   {/* ✅ FIXED CANCEL */}
-                  {(b.customerId === user._id ||
-                    b.customerName === user.name) && (
+                  {b.customerId === user._id && (
                     <button onClick={() => cancelBooking(b._id)}>
                       Cancel
                     </button>
