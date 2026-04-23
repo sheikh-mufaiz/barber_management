@@ -7,76 +7,113 @@ function BarberDashboard() {
   const [services, setServices] = useState([]);
   const [isOpen, setIsOpen] = useState(true);
   const [bookings, setBookings] = useState([]);
-
   const [customerName, setCustomerName] = useState("");
   const [selectedServices, setSelectedServices] = useState([]);
-
-  const [notified, setNotified] = useState("");
 
   const user = JSON.parse(localStorage.getItem("user"));
   const barberId = user?._id;
 
+  useEffect(() => {
+    document.title = "BARBER DASHBOARD UPDATED";
+    console.log("BARBER_DASHBOARD_LOADED", { barberId });
+    window.__BARBER_DASHBOARD_UPDATED = true;
+  }, [barberId]);
+
   const getServices = async () => {
-    const res = await fetch(`http://localhost:5000/api/services/${barberId}`);
-    const data = await res.json();
-    setServices(data);
+    try {
+      const res = await fetch(`http://localhost:5000/api/services/${barberId}`);
+      const data = await res.json();
+      setServices(data);
+    } catch (err) { console.error(err); }
   };
 
   const getBookings = async () => {
+  try {
     const res = await fetch("http://localhost:5000/api/bookings");
     const data = await res.json();
 
-    const filtered = data.filter((b) => b.barberId === barberId);
+    const filtered = data
+      .filter((b) => String(b.barberId) === String(barberId))
+      .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+    console.log("FRESH BOOKINGS:", filtered); // 🔥 DEBUG
+
     setBookings(filtered);
-  };
-
+  } catch (err) {
+    console.error(err);
+  }
+};
   useEffect(() => {
-    getServices();
-    getBookings();
-    setIsOpen(user?.isOpen);
-
-    const interval = setInterval(() => {
+    if (barberId) {
+      getServices();
       getBookings();
-    }, 2000);
+      setIsOpen(user?.isOpen);
 
-    return () => clearInterval(interval);
-  }, []);
-
-  // 🔔 Notification
-  useEffect(() => {
-    if (bookings.length === 0) return;
-
-    const first = bookings[0];
-
-    const waitTime = Math.floor(
-      (new Date(first.startTime) - new Date()) / 60000
-    );
-
-    if (first._id !== notified) {
-      if (waitTime <= 0) {
-        alert(`🔔 ${first.customerName}, it's your turn!`);
-        setNotified(first._id);
-      } else if (waitTime <= 5) {
-        alert(`⏱ ${first.customerName}, your turn in ${waitTime} min`);
-        setNotified(first._id);
-      }
+      const interval = setInterval(getBookings, 1000);
+      return () => clearInterval(interval);
     }
-  }, [bookings]);
+  }, [barberId]);
 
-  const completeBooking = async (id) => {
-    const res = await fetch(`http://localhost:5000/api/complete/${id}`, {
+  // ✅ WAIT CALCULATION
+ const barberBookings = bookings
+  .filter((b) => String(b.barberId) === String(barberId))
+  .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+  const calculateWait = (currentBooking) => {
+  let wait = 0;
+
+  for (let i = 0; i < barberBookings.length; i++) {
+    const b = barberBookings[i];
+
+    // STOP when reached current booking
+    if (b._id === currentBooking._id) break;
+
+    // ✅ ONLY FIRST BOOKING should reduce with time
+    if (i === 0 && b.status === "in-progress" && b.actualStartTime) {
+      const elapsed =
+        (Date.now() - new Date(b.actualStartTime)) / 60000;
+
+      const remaining = Math.max(0, b.totalTime - elapsed);
+
+      wait += remaining;
+    } else {
+      // ✅ ALL OTHER BOOKINGS → FULL TIME (NO REDUCTION)
+      wait += b.totalTime || 0;
+    }
+  }
+
+  return Math.floor(wait);
+};
+  // ✅ REMAINING TIME FOR IN-PROGRESS
+  const getRemaining = (booking) => {
+    if (booking.status === "in-progress" && booking.actualStartTime) {
+      const elapsed = (Date.now() - new Date(booking.actualStartTime)) / 60000;
+      return Math.max(0, Math.floor(booking.totalTime - elapsed));
+    }
+    return booking.totalTime || 0;
+  };
+  // ✅ START BOOKING (NEW)
+  const startBooking = async (id) => {
+  try {
+    const res = await fetch(`http://localhost:5000/api/start/${id}`, {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        userId: barberId
-      })
     });
 
     const data = await res.json();
-    alert(data.message);
+    console.log("START RESPONSE:", data);
 
+    await getBookings(); // ✅ IMPORTANT
+
+  } catch (err) {
+    console.error("START ERROR:", err);
+  }
+};
+  const completeBooking = async (id) => {
+    await fetch(`http://localhost:5000/api/complete/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: barberId })
+    });
     getBookings();
   };
 
@@ -85,10 +122,8 @@ function BarberDashboard() {
       `http://localhost:5000/api/toggle-shop/${barberId}`,
       { method: "PUT" }
     );
-
     const data = await res.json();
     setIsOpen(data.isOpen);
-
     localStorage.setItem(
       "user",
       JSON.stringify({ ...user, isOpen: data.isOpen })
@@ -96,10 +131,7 @@ function BarberDashboard() {
   };
 
   const addService = async () => {
-    if (!name || !duration || !price) {
-      alert("Please fill all fields");
-      return;
-    }
+    if (!name || !duration || !price) return alert("Fill fields");
 
     await fetch("http://localhost:5000/api/add-service", {
       method: "POST",
@@ -108,8 +140,8 @@ function BarberDashboard() {
       },
       body: JSON.stringify({
         name,
-        duration,
-        price,
+        duration: Number(duration),
+        price: Number(price),
         barberId
       })
     });
@@ -117,11 +149,10 @@ function BarberDashboard() {
     setName("");
     setDuration("");
     setPrice("");
-
     getServices();
   };
 
-  const toggleService = (service) => {
+  const toggleServiceSelection = (service) => {
     const exists = selectedServices.find((s) => s._id === service._id);
 
     if (exists) {
@@ -135,8 +166,7 @@ function BarberDashboard() {
 
   const addOfflineBooking = async () => {
     if (!customerName || selectedServices.length === 0) {
-      alert("Fill all fields");
-      return;
+      return alert("Fill fields");
     }
 
     const totalTime = selectedServices.reduce(
@@ -161,140 +191,159 @@ function BarberDashboard() {
 
     setCustomerName("");
     setSelectedServices([]);
-
-    alert("Walk-in customer added ✅");
-
     getBookings();
   };
+return (
+  <div style={{ padding: "30px", maxWidth: "800px", margin: "0 auto" }}>
 
-  return (
-    <div style={{ padding: "20px" }}>
-      <h1>Barber Dashboard 🧑‍🔧</h1>
+    <h1>Barber Dashboard</h1>
 
-      <button
-        onClick={toggleShop}
-        style={{
-          background: isOpen ? "green" : "red",
-          color: "white",
-          padding: "10px",
-          marginBottom: "20px"
-        }}
-      >
-        {isOpen ? "🟢 Shop Open" : "🔴 Shop Closed"}
-      </button>
+    <button
+  onClick={toggleShop}
+  style={{
+    background: isOpen ? "red" : "green",
+    color: "white",
+    padding: "5px 10px",
+    border: "none",
+    marginBottom: "10px"
+  }}
+>
+  {isOpen ? "Close Shop" : "Open Shop"}
+</button>
+  <h2>Add Service</h2>
+  
 
-      <h2>Add Service</h2>
+<input
+  value={name}
+  onChange={(e) => setName(e.target.value)}
+  placeholder="Service Name"
+/>
 
-      <input placeholder="Service name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input placeholder="Duration (min)" value={duration} onChange={(e) => setDuration(e.target.value)} />
-      <input placeholder="Price" value={price} onChange={(e) => setPrice(e.target.value)} />
+<input
+  value={duration}
+  onChange={(e) => setDuration(e.target.value)}
+  placeholder="Duration (min)"
+/>
 
-      <br /><br />
-      <button onClick={addService}>Add Service</button>
+<input
+  value={price}
+  onChange={(e) => setPrice(e.target.value)}
+  placeholder="Price"
+/>
 
-      <h2>Your Services</h2>
-      {services.map((s) => (
-        <div key={s._id}>
-          <p>{s.name} - {s.duration} min - ₹{s.price}</p>
-        </div>
-      ))}
+<button onClick={addService}>
+  Add Service
+</button>
+    {/* ================= QUEUE ================= */}
+    {bookings.map((b, index) => {
+      const waitTime = calculateWait(b);
 
-      <h2>Add Walk-in Customer 🚶‍♂️</h2>
-
-      <input
-        placeholder="Customer Name"
-        value={customerName}
-        onChange={(e) => setCustomerName(e.target.value)}
-      />
-
-      <h3>Select Services</h3>
-
-      {services.map((s) => (
+      return (
         <div
-          key={s._id}
-          onClick={() => toggleService(s)}
+          key={b._id}
           style={{
-            border: "1px solid black",
-            padding: "5px",
-            margin: "5px",
-            cursor: "pointer",
-            background:
-              selectedServices.find((x) => x._id === s._id)
-                ? "#ddd"
-                : "white"
+            border: "1px solid #ccc",
+            marginBottom: "10px",
+            padding: "10px",
+            background: index === 0 ? "#d4edda" : "white",
           }}
         >
-          {s.name} - {s.duration} min
+          <h3>{index + 1}. {b.customerName}</h3>
+          <p>
+  Services:
+  {b.services?.map((s, i) => (
+    <span
+      key={i}
+      style={{
+        margin: "5px",
+        padding: "3px 6px",
+        background: "#eee",
+        borderRadius: "5px"
+      }}
+    >
+      {s}
+    </span>
+  ))}
+</p>
+          <p>
+            Status:{" "}
+            {b.status === "in-progress"
+              ? "🟢 In Progress"
+              : index === 0
+              ? "⏳ Ready"
+              : "⌛ Waiting"}
+          </p>
+
+          <p>Start: {new Date(b.startTime).toLocaleTimeString()}</p>
+
+          <p>
+            Actual Start:{" "}
+            {b.actualStartTime
+              ? new Date(b.actualStartTime).toLocaleTimeString()
+              : "none"}
+          </p>
+
+          <p style={{ fontWeight: "bold" }}>
+            {b.status === "in-progress" ? (
+              <span style={{ color: "green" }}>
+                🟢 In Progress ({getRemaining(b)} min left)
+              </span>
+            ) : (
+              <span>⏱ Waiting: {waitTime} min</span>
+            )}
+          </p>
+
+          {index === 0 && b.status !== "in-progress" && (
+            <button onClick={() => startBooking(b._id)}>
+              ▶ Start
+            </button>
+          )}
+
+          {b.status === "in-progress" && (
+            <button onClick={() => completeBooking(b._id)}>
+              ✅ Complete
+            </button>
+          )}
         </div>
-      ))}
+      );
+    })}
 
-      <p>Total Time: {selectedServices.reduce((sum, s) => sum + s.duration, 0)} min</p>
+    {/* ================= WALK-IN ================= */}
+    <h2>Add Walk-in</h2>
 
-      <button onClick={addOfflineBooking}>Add to Queue</button>
+    <input
+      value={customerName}
+      onChange={(e) => setCustomerName(e.target.value)}
+      placeholder="Name"
+    />
 
-      <h2>Current Queue 📋</h2>
+    <div>
+  {services.map((s) => {
+    const isSelected = selectedServices.find(
+      (item) => item._id === s._id
+    );
 
-      {bookings.length === 0 ? (
-        <p>No customers in queue</p>
-      ) : (
-        bookings.map((b, index) => {
+    return (
+      <button
+        key={s._id}
+        onClick={() => toggleServiceSelection(s)}
+        style={{
+          margin: "5px",
+          background: isSelected ? "green" : "lightgray",
+          color: isSelected ? "white" : "black"
+        }}
+      >
+        {s.name} ({s.duration} min)
+      </button>
+      
+    );
+  })}
+</div>
+    <button onClick={addOfflineBooking}>
+      Add to Queue
+    </button>
 
-          const waitTime = Math.max(
-            0,
-            Math.floor((new Date(b.startTime) - new Date()) / 60000)
-          );
-
-          // ✅ FIXED REPEAT LOGIC
-          const visitCount = bookings.filter(
-            (x) =>
-              (x.customerId && x.customerId === b.customerId) ||
-              (!x.customerId && x.customerName === b.customerName)
-          ).length;
-
-          return (
-            <div key={b._id} style={{
-              border: "1px solid #ccc",
-              padding: "10px",
-              marginBottom: "10px",
-              borderRadius: "8px",
-              background: index === 0 ? "#d4edda" : "white"
-            }}>
-              <p>
-                {index + 1}. {b.services.join(", ")} -{" "}
-                {new Date(b.startTime).toLocaleTimeString()}
-              </p>
-
-              <p>👤 {b.customerName}</p>
-              <p>🆔 {b.orderId}</p>
-
-              <p>⏱ Waiting: {waitTime} min</p>
-
-              {/* ✅ FIXED */}
-              {visitCount > 1 && (
-                <p style={{ color: "orange" }}>
-                  🔁 Repeat Customer ({visitCount} bookings)
-                </p>
-              )}
-
-              {b.isOffline && <p>🚶 Walk-in</p>}
-
-              <button
-                onClick={() => completeBooking(b._id)}
-                style={{
-                  background: "green",
-                  color: "white",
-                  padding: "5px",
-                  marginTop: "5px"
-                }}
-              >
-                ✅ Complete
-              </button>
-            </div>
-          );
-        })
-      )}
-    </div>
-  );
+  </div>
+);
 }
-
 export default BarberDashboard;

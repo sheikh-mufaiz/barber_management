@@ -200,5 +200,32 @@ router.put("/complete/:id", async (req, res) => {
 });
 
 
+// ✅ START BOOKING
+router.put("/start/:id", async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+
+    if (!booking) {
+      return res.status(404).json({ success: false });
+    }
+
+    // 🔥 FORCE update
+    booking.status = "in-progress";
+    booking.actualStartTime = new Date();
+
+    await booking.save();
+
+    console.log("START SAVED:", booking.actualStartTime); // ✅ DEBUG
+
+    res.json({
+      success: true,
+      booking,
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
 // ✅ EXPORT
 module.exports = router;

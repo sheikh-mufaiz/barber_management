@@ -11,6 +11,53 @@ function Booking() {
   const user = JSON.parse(localStorage.getItem("user"));
   const barberId = selectedBarber?._id;
 
+// ✅ PASTE YOUR FUNCTION HERE
+const calculateWait = (booking, index) => {
+  const barberBookings = bookings.filter(
+    (b) => String(b.barberId) === String(barberId)
+  );
+
+  // ✅ FIRST CUSTOMER
+  if (index === 0) {
+    // 🔥 NOT STARTED → WAIT = 0
+    if (!booking.actualStartTime) return 0;
+
+    const start = new Date(booking.actualStartTime);
+    if (isNaN(start.getTime())) return 0;
+
+    const elapsed = (Date.now() - start.getTime()) / 60000;
+
+    return Math.max(0, Math.floor((booking.totalTime || 0) - elapsed));
+  }
+
+  // ✅ OTHER CUSTOMERS
+  let wait = 0;
+
+  for (let i = 0; i < index; i++) {
+    const b = barberBookings[i];
+
+    if (i === 0) {
+      // 🔥 IF FIRST NOT STARTED → FULL TIME
+      if (!b.actualStartTime) {
+        wait += b.totalTime || 0;
+      } else {
+        const start = new Date(b.actualStartTime);
+
+        if (isNaN(start.getTime())) {
+          wait += b.totalTime || 0;
+        } else {
+          const elapsed = (Date.now() - start.getTime()) / 60000;
+
+          wait += Math.max(0, (b.totalTime || 0) - elapsed);
+        }
+      }
+    } else {
+      wait += b.totalTime || 0;
+    }
+  }
+
+  return Math.floor(wait);
+};
   // 🔥 Fetch services
   const getServices = async () => {
     if (!barberId) return;
@@ -27,8 +74,11 @@ function Booking() {
     const res = await fetch("http://localhost:5000/api/bookings");
     const data = await res.json();
 
-    const filtered = data.filter((b) => b.barberId === barberId);
-    setBookings(filtered);
+const filtered = data
+  .filter((b) => String(b.barberId) === String(barberId)) // ✅ FIX
+  .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+setBookings(filtered);
   };
 
   useEffect(() => {
@@ -186,12 +236,7 @@ function Booking() {
           ) : (
             bookings.map((b, index) => {
 
-              const waitTime = Math.max(
-                0,
-                Math.floor(
-                  (new Date(b.startTime) - new Date()) / 60000
-                )
-              );
+              const waitTime = calculateWait(b, index);
 
               // ✅ Repeat logic (only by customerId)
               const visitCount = bookings.filter(
@@ -210,13 +255,21 @@ function Booking() {
                 >
                   <p>
                     {index + 1}. {b.services.join(", ")} -{" "}
-                    {new Date(b.startTime).toLocaleTimeString()}
+                    {b.actualStartTime
+  ? new Date(b.actualStartTime).toLocaleTimeString()
+  : "Waiting"}
                   </p>
 
                   <p>👤 {b.customerName}</p>
                   <p>🆔 {b.orderId}</p>
 
-                  <p>⏱ Waiting: {waitTime} min</p>
+                  {index === 0 && b.actualStartTime ? (
+  <p style={{ color: "green" }}>
+    🟢 In Progress ({waitTime} min left)
+  </p>
+) : (
+  <p>⏱ Waiting: {waitTime} min</p>
+)}
 
                   {visitCount > 1 && (
                     <p style={{ color: "orange" }}>

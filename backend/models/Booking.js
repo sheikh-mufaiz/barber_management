@@ -10,6 +10,7 @@ const bookingSchema = new mongoose.Schema({
   startTime: Date,
   isOffline: { type: Boolean, default: false },
   endTime: Date,
+  actualStartTime: Date,
   status: {
     type: String,
     default: "booked"
