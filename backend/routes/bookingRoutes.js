@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const Booking = require("../models/Booking");
-
+const Service = require("../models/Service");
 
 // 🔥 CREATE BOOKING (AUTO TIME SLOT)
 router.post("/book", async (req, res) => {
@@ -225,6 +225,24 @@ router.put("/start/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false });
+  }
+});
+
+router.delete("/delete-service/:id", async (req, res) => {
+  try {
+    console.log("DELETE ID:", req.params.id);
+
+    const deleted = await Service.findByIdAndDelete(req.params.id);
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    res.json({ success: true });
+
+  } catch (err) {
+    console.error("DELETE ERROR:", err); // 🔥 THIS WILL SHOW REAL ERROR
+    res.status(500).json({ error: err.message });
   }
 });
 // ✅ EXPORT

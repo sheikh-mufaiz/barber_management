@@ -131,8 +131,9 @@ function BarberDashboard() {
   };
 
   const addService = async () => {
-    if (!name || !duration || !price) return alert("Fill fields");
-
+   if (!name.trim() || !duration) {
+  return alert("Service Name and Duration are required");
+}
     await fetch("http://localhost:5000/api/add-service", {
       method: "POST",
       headers: {
@@ -152,6 +153,19 @@ function BarberDashboard() {
     getServices();
   };
 
+  const deleteService = async (id) => {
+  console.log("DELETE CLICKED:", id); // 🔥 ADD THIS
+
+  try {
+    await fetch(`http://localhost:5000/api/delete-service/${id}`, {
+      method: "DELETE",
+    });
+
+    getServices();
+  } catch (err) {
+    console.error(err);
+  }
+};
   const toggleServiceSelection = (service) => {
     const exists = selectedServices.find((s) => s._id === service._id);
 
@@ -317,33 +331,55 @@ return (
       placeholder="Name"
     />
 
-    <div>
+   <div>
   {services.map((s) => {
     const isSelected = selectedServices.find(
       (item) => item._id === s._id
     );
 
     return (
-      <button
-        key={s._id}
-        onClick={() => toggleServiceSelection(s)}
-        style={{
-          margin: "5px",
-          background: isSelected ? "green" : "lightgray",
-          color: isSelected ? "white" : "black"
-        }}
-      >
-        {s.name} ({s.duration} min)
-      </button>
-      
+      <div key={s._id} style={{ marginBottom: "5px" }}>
+        
+        {/* SELECT BUTTON */}
+        <button
+          onClick={() => toggleServiceSelection(s)}
+          style={{
+            margin: "5px",
+            background: isSelected ? "green" : "lightgray",
+            color: isSelected ? "white" : "black"
+          }}
+        >
+          {s.name} ({s.duration} min)
+        </button>
+
+        {/* DELETE BUTTON */}
+        <button
+  onClick={(e) => {
+    e.stopPropagation();   // 🔥 VERY IMPORTANT
+    console.log("DELETE CLICK:", s._id);
+    deleteService(s._id);
+  }}
+  style={{
+    marginLeft: "5px",
+    background: "red",
+    color: "white",
+    border: "none"
+  }}
+>
+  ❌
+</button>
+
+      </div>
     );
   })}
 </div>
-    <button onClick={addOfflineBooking}>
-      Add to Queue
-    </button>
 
-  </div>
+<button onClick={addOfflineBooking}>
+  Add to Queue
+</button>
+
+</div>
 );
 }
+
 export default BarberDashboard;
