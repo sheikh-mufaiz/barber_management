@@ -1,12 +1,14 @@
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+
 
 // 🔥 IMPORT MODEL (for auto delay system)
 const Booking = require("./models/Booking");
 
 const app = express();
-
+app.use(express.json());
 // ✅ Middleware
 app.use(cors());
 app.use(express.json());

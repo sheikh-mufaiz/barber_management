@@ -130,28 +130,50 @@ function BarberDashboard() {
     );
   };
 
-  const addService = async () => {
-   if (!name.trim() || !duration) {
-  return alert("Service Name and Duration are required");
-}
+ const addService = async () => {
+  // 🔥 VALIDATION STARTS HERE
+
+  const numericDuration = Number(duration);
+  const numericPrice = Number(price);
+
+  if (!name.trim()) {
+    return alert("Service name is required");
+  }
+
+  if (isNaN(numericDuration) || numericDuration <= 0) {
+    return alert("Duration must be a valid number");
+  }
+
+  if (price && isNaN(numericPrice)) {
+    return alert("Price must be a number");
+  }
+
+  // 🔥 VALIDATION ENDS HERE
+
+  try {
     await fetch("http://localhost:5000/api/add-service", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         name,
-        duration: Number(duration),
-        price: Number(price),
-        barberId
-      })
+        duration: numericDuration, // ✅ send number
+        price: numericPrice,       // ✅ send number
+        barberId,
+      }),
     });
 
+    // clear inputs
     setName("");
     setDuration("");
     setPrice("");
-    getServices();
-  };
+
+    getServices(); // refresh
+  } catch (err) {
+    console.error(err);
+  }
+};
 
   const deleteService = async (id) => {
   console.log("DELETE CLICKED:", id); // 🔥 ADD THIS
@@ -234,12 +256,14 @@ return (
 />
 
 <input
+  type="number"
   value={duration}
   onChange={(e) => setDuration(e.target.value)}
   placeholder="Duration (min)"
 />
 
 <input
+  type="number"
   value={price}
   onChange={(e) => setPrice(e.target.value)}
   placeholder="Price"
