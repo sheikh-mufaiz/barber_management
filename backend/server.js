@@ -2,10 +2,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-
-
-// 🔥 IMPORT MODEL (for auto delay system)
-const Booking = require("./models/Booking");
+const { recalculateAllQueues } = require("./utils/scheduler");
 
 const app = express();
 app.use(express.json());
@@ -33,36 +30,11 @@ mongoose.connect("mongodb+srv://admin:admin123@cluster0.6ahzbd4.mongodb.net/barb
   .catch(err => console.log(err));
 
 
-// 🔥🔥 AUTO DELAY SYSTEM (SMART QUEUE)
+// 🔥🔥 AUTO DELAY SYSTEM (SMART QUEUE PER BARBER)
 setInterval(async () => {
   try {
-    const now = new Date();
-
-    // 🔥 get all bookings sorted
-    const bookings = await Booking.find().sort({ startTime: 1 });
-
-    if (bookings.length === 0) return;
-
-    let currentTime = now;
-
-    for (let booking of bookings) {
-      // 🔥 if booking time already passed → shift
-      if (booking.startTime < currentTime) {
-        booking.startTime = new Date(currentTime);
-        booking.endTime = new Date(
-          currentTime.getTime() + booking.totalTime * 60000
-        );
-
-        currentTime = booking.endTime;
-
-        await booking.save();
-      } else {
-        currentTime = booking.endTime;
-      }
-    }
-
-    console.log("⏱ Queue auto-adjusted");
-
+    await recalculateAllQueues();
+    console.log("⏱ Queues auto-adjusted per barber");
   } catch (err) {
     console.log("Auto delay error:", err.message);
   }

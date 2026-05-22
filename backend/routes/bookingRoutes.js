@@ -2,6 +2,45 @@ const express = require("express");
 const router = express.Router();
 const Booking = require("../models/Booking");
 const Service = require("../models/Service");
+const {
+  estimateBookingForBarber,
+  isScheduledSlotAvailable,
+  recalculateQueueForBarber
+} = require("../utils/scheduler");
+
+// 🔥 ESTIMATE BOOKING (NO SAVE)
+router.post("/estimate-booking", async (req, res) => {
+  try {
+    const {
+      barberId,
+      totalTime,
+      bookingType = "instant",
+      scheduledFor
+    } = req.body;
+
+    if (!barberId || !totalTime) {
+      return res.status(400).json({
+        available: false,
+        message: "Missing required fields"
+      });
+    }
+
+    const estimate = await estimateBookingForBarber({
+      barberId,
+      totalTime,
+      bookingType,
+      scheduledFor
+    });
+
+    res.status(estimate.available ? 200 : 409).json(estimate);
+
+  } catch (error) {
+    res.status(500).json({
+      available: false,
+      error: error.message
+    });
+  }
+});
 
 // 🔥 CREATE BOOKING (AUTO TIME SLOT)
 router.post("/book", async (req, res) => {
@@ -12,13 +51,37 @@ router.post("/book", async (req, res) => {
       totalTime,
       customerName,
       customerId,
-      isOffline
+      isOffline,
+      bookingType = "instant",
+      scheduledFor
     } = req.body;
+
+    const normalizedBookingType =
+      bookingType === "scheduled" ? "scheduled" : "instant";
+    const requestedScheduleTime = scheduledFor ? new Date(scheduledFor) : null;
 
     // ✅ VALIDATION (FIXED)
     if (!barberId || !totalTime || (!customerId && !isOffline)) {
       return res.status(400).json({
         message: "Missing required fields"
+      });
+    }
+
+    if (
+      normalizedBookingType === "scheduled" &&
+      (!requestedScheduleTime || isNaN(requestedScheduleTime.getTime()))
+    ) {
+      return res.status(400).json({
+        message: "Please select a valid scheduled time"
+      });
+    }
+
+    if (
+      normalizedBookingType === "scheduled" &&
+      requestedScheduleTime <= new Date()
+    ) {
+      return res.status(400).json({
+        message: "Scheduled time must be in the future"
       });
     }
 
@@ -36,20 +99,38 @@ router.post("/book", async (req, res) => {
       }
     }
 
-    // 🔥 Get last booking
-    const lastBooking = await Booking.findOne({ barberId })
-      .sort({ endTime: -1 });
+    if (normalizedBookingType === "scheduled") {
+      await recalculateQueueForBarber(barberId);
 
-    let start = lastBooking?.endTime
-      ? new Date(lastBooking.endTime)
-      : new Date();
+      const existingBookings = await Booking.find({ barberId }).sort({
+        startTime: 1
+      });
+      const slotAvailable = isScheduledSlotAvailable(
+        existingBookings,
+        requestedScheduleTime,
+        totalTime
+      );
 
-    const end = new Date(start.getTime() + totalTime * 60000);
+      if (!slotAvailable) {
+        return res.status(409).json({
+          message: "No slot available at this scheduled time"
+        });
+      }
+    }
+
+    const start =
+      normalizedBookingType === "scheduled"
+        ? requestedScheduleTime
+        : new Date();
+    const end = new Date(start.getTime() + Number(totalTime) * 60000);
 
     const booking = new Booking({
       barberId,
       services,
-      totalTime,
+      totalTime: Number(totalTime),
+      bookingType: normalizedBookingType,
+      scheduledFor:
+        normalizedBookingType === "scheduled" ? requestedScheduleTime : null,
       startTime: start,
       endTime: end,
       customerName,
@@ -59,10 +140,16 @@ router.post("/book", async (req, res) => {
     });
 
     await booking.save();
+    await recalculateQueueForBarber(barberId);
+
+    const updatedBooking = await Booking.findById(booking._id);
 
     res.json({
-      message: "Booking auto-assigned ✅",
-      booking
+      message:
+        normalizedBookingType === "scheduled"
+          ? "Scheduled booking created ✅"
+          : "Instant booking added ✅",
+      booking: updatedBooking
     });
 
   } catch (error) {
@@ -119,24 +206,7 @@ router.delete("/cancel/:id", async (req, res) => {
 
     const deletedBooking = await Booking.findByIdAndDelete(bookingId);
 
-    // 🔥 SHIFT BOOKINGS
-    const futureBookings = await Booking.find({
-      barberId: deletedBooking.barberId,
-      startTime: { $gt: deletedBooking.startTime }
-    }).sort({ startTime: 1 });
-
-    let prevEndTime = deletedBooking.startTime;
-
-    for (let b of futureBookings) {
-      b.startTime = new Date(prevEndTime);
-      b.endTime = new Date(
-        prevEndTime.getTime() + b.totalTime * 60000
-      );
-
-      prevEndTime = b.endTime;
-
-      await b.save();
-    }
+    await recalculateQueueForBarber(deletedBooking.barberId);
 
     res.json({
       message: "Booking cancelled & slots shifted 🔥"
@@ -171,24 +241,7 @@ router.put("/complete/:id", async (req, res) => {
 
     const completed = await Booking.findByIdAndDelete(bookingId);
 
-    // 🔥 SHIFT BOOKINGS
-    const futureBookings = await Booking.find({
-      barberId: completed.barberId,
-      startTime: { $gt: completed.startTime }
-    }).sort({ startTime: 1 });
-
-    let prevEndTime = new Date();
-
-    for (let b of futureBookings) {
-      b.startTime = new Date(prevEndTime);
-      b.endTime = new Date(
-        prevEndTime.getTime() + b.totalTime * 60000
-      );
-
-      prevEndTime = b.endTime;
-
-      await b.save();
-    }
+    await recalculateQueueForBarber(completed.barberId);
 
     res.json({
       message: "Booking completed & queue updated ✅"

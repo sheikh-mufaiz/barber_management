@@ -7,57 +7,41 @@ function Booking() {
   const [message, setMessage] = useState("");
   const [bookings, setBookings] = useState([]);
   const [selectedBarber, setSelectedBarber] = useState(null);
+  const [bookingType, setBookingType] = useState("instant");
+  const [scheduledFor, setScheduledFor] = useState("");
+  const [bookingEstimate, setBookingEstimate] = useState(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
 
   const user = JSON.parse(localStorage.getItem("user"));
   const barberId = selectedBarber?._id;
 
-// ✅ PASTE YOUR FUNCTION HERE
-const calculateWait = (booking, index) => {
-  const barberBookings = bookings.filter(
-    (b) => String(b.barberId) === String(barberId)
-  );
+  const getLocalDateTimeValue = (date = new Date()) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  };
 
-  // ✅ FIRST CUSTOMER
-  if (index === 0) {
-    // 🔥 NOT STARTED → WAIT = 0
-    if (!booking.actualStartTime) return 0;
+  const getWaitTime = (booking) => {
+    if (booking.status === "in-progress" && booking.actualStartTime) {
+      const elapsed = (Date.now() - new Date(booking.actualStartTime)) / 60000;
+      return Math.max(0, Math.floor((booking.totalTime || 0) - elapsed));
+    }
 
-    const start = new Date(booking.actualStartTime);
+    const start = new Date(booking.startTime);
     if (isNaN(start.getTime())) return 0;
 
-    const elapsed = (Date.now() - start.getTime()) / 60000;
+    return Math.max(0, Math.floor((start.getTime() - Date.now()) / 60000));
+  };
 
-    return Math.max(0, Math.floor((booking.totalTime || 0) - elapsed));
-  }
+  const selectedTotalTime = selectedServices.reduce(
+    (sum, s) => sum + s.duration,
+    0
+  );
 
-  // ✅ OTHER CUSTOMERS
-  let wait = 0;
+  const bookDisabled =
+    selectedServices.length === 0 ||
+    (bookingType === "scheduled" && !scheduledFor) ||
+    (bookingType === "scheduled" && bookingEstimate?.available === false);
 
-  for (let i = 0; i < index; i++) {
-    const b = barberBookings[i];
-
-    if (i === 0) {
-      // 🔥 IF FIRST NOT STARTED → FULL TIME
-      if (!b.actualStartTime) {
-        wait += b.totalTime || 0;
-      } else {
-        const start = new Date(b.actualStartTime);
-
-        if (isNaN(start.getTime())) {
-          wait += b.totalTime || 0;
-        } else {
-          const elapsed = (Date.now() - start.getTime()) / 60000;
-
-          wait += Math.max(0, (b.totalTime || 0) - elapsed);
-        }
-      }
-    } else {
-      wait += b.totalTime || 0;
-    }
-  }
-
-  return Math.floor(wait);
-};
   // 🔥 Fetch services
   const getServices = async () => {
     if (!barberId) return;
@@ -76,13 +60,14 @@ const calculateWait = (booking, index) => {
 
 const filtered = data
   .filter((b) => String(b.barberId) === String(barberId)) // ✅ FIX
-  .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
 setBookings(filtered);
   };
 
   useEffect(() => {
     setSelectedServices([]);
+    setBookingEstimate(null);
 
     getServices();
     getBookings();
@@ -93,6 +78,69 @@ setBookings(filtered);
 
     return () => clearInterval(interval);
   }, [barberId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!barberId || selectedServices.length === 0) {
+      setBookingEstimate(null);
+      return;
+    }
+
+    if (bookingType === "scheduled" && !scheduledFor) {
+      setBookingEstimate(null);
+      return;
+    }
+
+    let ignore = false;
+
+    const getEstimate = async () => {
+      try {
+        setEstimateLoading(true);
+
+        const res = await fetch("http://localhost:5000/api/estimate-booking", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            barberId,
+            totalTime: selectedTotalTime,
+            bookingType,
+            scheduledFor: bookingType === "scheduled" ? scheduledFor : null
+          })
+        });
+
+        const data = await res.json();
+
+        if (!ignore) {
+          setBookingEstimate({
+            ...data,
+            available: res.ok && data.available !== false
+          });
+        }
+      } catch (err) {
+        if (!ignore) {
+          setBookingEstimate({
+            available: false,
+            message: "Could not estimate start time"
+          });
+        }
+      } finally {
+        if (!ignore) setEstimateLoading(false);
+      }
+    };
+
+    getEstimate();
+
+    return () => {
+      ignore = true;
+    };
+  }, [
+    barberId,
+    selectedServices,
+    selectedTotalTime,
+    bookingType,
+    scheduledFor
+  ]);
 
   // 🔥 Toggle services
   const toggleService = (service) => {
@@ -114,10 +162,10 @@ setBookings(filtered);
       return;
     }
 
-    const totalTime = selectedServices.reduce(
-      (sum, s) => sum + s.duration,
-      0
-    );
+    if (bookingType === "scheduled" && !scheduledFor) {
+      setMessage("Please select scheduled time");
+      return;
+    }
 
     // ✅ FIXED DUPLICATE CHECK (only by customerId)
     const existing = bookings.find(b => b.customerId === user._id);
@@ -137,16 +185,23 @@ setBookings(filtered);
       body: JSON.stringify({
         barberId,
         services: selectedServices.map((s) => s.name),
-        totalTime,
+        totalTime: selectedTotalTime,
         customerName: user.name,
-        customerId: user._id
+        customerId: user._id,
+        bookingType,
+        scheduledFor: bookingType === "scheduled" ? scheduledFor : null
       }),
     });
 
     const data = await res.json();
-    setMessage(data.message);
+    setMessage(data.message || data.error);
+
+    if (!res.ok) return;
 
     setSelectedServices([]);
+    setBookingType("instant");
+    setScheduledFor("");
+    setBookingEstimate(null);
     getBookings();
   };
 
@@ -208,9 +263,72 @@ setBookings(filtered);
           ))}
 
           <p>
-            Total Time:{" "}
-            {selectedServices.reduce((sum, s) => sum + s.duration, 0)} min
+            Total Time: {selectedTotalTime} min
           </p>
+
+          {selectedServices.length > 0 && (
+            <div
+              style={{
+                border: "1px solid #ddd",
+                padding: "10px",
+                marginTop: "10px",
+                borderRadius: "8px",
+                background: "#f9f9f9"
+              }}
+            >
+              {estimateLoading ? (
+                <p>Checking expected start...</p>
+              ) : bookingEstimate?.available ? (
+                <>
+                  <p>
+                    Expected start:{" "}
+                    {new Date(
+                      bookingEstimate.estimatedStartTime
+                    ).toLocaleTimeString()}
+                  </p>
+                  <p>Waiting: {bookingEstimate.waitMinutes || 0} min</p>
+                </>
+              ) : bookingEstimate?.message ? (
+                <p style={{ color: "red" }}>{bookingEstimate.message}</p>
+              ) : bookingType === "scheduled" && !scheduledFor ? (
+                <p>Select scheduled time to see expected start</p>
+              ) : null}
+            </div>
+          )}
+
+          <div style={{ marginTop: "10px" }}>
+            <label style={{ marginRight: "10px" }}>
+              <input
+                type="radio"
+                name="bookingType"
+                value="instant"
+                checked={bookingType === "instant"}
+                onChange={() => setBookingType("instant")}
+              />
+              Instant
+            </label>
+
+            <label>
+              <input
+                type="radio"
+                name="bookingType"
+                value="scheduled"
+                checked={bookingType === "scheduled"}
+                onChange={() => setBookingType("scheduled")}
+              />
+              Schedule
+            </label>
+          </div>
+
+          {bookingType === "scheduled" && (
+            <input
+              type="datetime-local"
+              value={scheduledFor}
+              min={getLocalDateTimeValue()}
+              onChange={(e) => setScheduledFor(e.target.value)}
+              style={{ display: "block", marginTop: "10px" }}
+            />
+          )}
 
           {/* 🔥 WARNING UI */}
           {bookings.some(b => b.customerId === user._id) && (
@@ -221,7 +339,7 @@ setBookings(filtered);
 
           <button
             onClick={handleBooking}
-            disabled={selectedServices.length === 0}
+            disabled={bookDisabled}
             style={{ padding: "10px", marginTop: "10px" }}
           >
             Book Selected Services
@@ -236,7 +354,7 @@ setBookings(filtered);
           ) : (
             bookings.map((b, index) => {
 
-              const waitTime = calculateWait(b, index);
+              const waitTime = getWaitTime(b);
 
               // ✅ Repeat logic (only by customerId)
               const visitCount = bookings.filter(
@@ -262,6 +380,15 @@ setBookings(filtered);
 
                   <p>👤 {b.customerName}</p>
                   <p>🆔 {b.orderId}</p>
+                  <p>
+                    Type:{" "}
+                    {b.bookingType === "scheduled" ? "Scheduled" : "Instant"}
+                  </p>
+                  {b.bookingType === "scheduled" && (
+                    <p>
+                      Scheduled: {new Date(b.startTime).toLocaleString()}
+                    </p>
+                  )}
 
                   {index === 0 && b.actualStartTime ? (
   <p style={{ color: "green" }}>

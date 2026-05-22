@@ -9,6 +9,8 @@ function BarberDashboard() {
   const [bookings, setBookings] = useState([]);
   const [customerName, setCustomerName] = useState("");
   const [selectedServices, setSelectedServices] = useState([]);
+  const [walkInBookingType, setWalkInBookingType] = useState("instant");
+  const [walkInScheduledFor, setWalkInScheduledFor] = useState("");
 
   const user = JSON.parse(localStorage.getItem("user"));
   const barberId = user?._id;
@@ -54,36 +56,17 @@ function BarberDashboard() {
     }
   }, [barberId]);
 
-  // ✅ WAIT CALCULATION
- const barberBookings = bookings
-  .filter((b) => String(b.barberId) === String(barberId))
-  .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  const getLocalDateTimeValue = (date = new Date()) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  };
 
-  const calculateWait = (currentBooking) => {
-  let wait = 0;
+  const calculateWait = (booking) => {
+    const start = new Date(booking.startTime);
+    if (isNaN(start.getTime())) return 0;
 
-  for (let i = 0; i < barberBookings.length; i++) {
-    const b = barberBookings[i];
-
-    // STOP when reached current booking
-    if (b._id === currentBooking._id) break;
-
-    // ✅ ONLY FIRST BOOKING should reduce with time
-    if (i === 0 && b.status === "in-progress" && b.actualStartTime) {
-      const elapsed =
-        (Date.now() - new Date(b.actualStartTime)) / 60000;
-
-      const remaining = Math.max(0, b.totalTime - elapsed);
-
-      wait += remaining;
-    } else {
-      // ✅ ALL OTHER BOOKINGS → FULL TIME (NO REDUCTION)
-      wait += b.totalTime || 0;
-    }
-  }
-
-  return Math.floor(wait);
-};
+    return Math.max(0, Math.floor((start.getTime() - Date.now()) / 60000));
+  };
   // ✅ REMAINING TIME FOR IN-PROGRESS
   const getRemaining = (booking) => {
     if (booking.status === "in-progress" && booking.actualStartTime) {
@@ -205,12 +188,16 @@ function BarberDashboard() {
       return alert("Fill fields");
     }
 
+    if (walkInBookingType === "scheduled" && !walkInScheduledFor) {
+      return alert("Select scheduled time");
+    }
+
     const totalTime = selectedServices.reduce(
       (sum, s) => sum + s.duration,
       0
     );
 
-    await fetch("http://localhost:5000/api/book", {
+    const res = await fetch("http://localhost:5000/api/book", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -221,12 +208,22 @@ function BarberDashboard() {
         totalTime,
         customerName,
         customerId: "offline-" + Date.now(),
-        isOffline: true
+        isOffline: true,
+        bookingType: walkInBookingType,
+        scheduledFor:
+          walkInBookingType === "scheduled" ? walkInScheduledFor : null
       })
     });
 
+    if (!res.ok) {
+      const data = await res.json();
+      return alert(data.message || data.error || "Booking failed");
+    }
+
     setCustomerName("");
     setSelectedServices([]);
+    setWalkInBookingType("instant");
+    setWalkInScheduledFor("");
     getBookings();
   };
 return (
@@ -312,7 +309,15 @@ return (
               : "⌛ Waiting"}
           </p>
 
+          <p>
+            Type: {b.bookingType === "scheduled" ? "Scheduled" : "Instant"}
+          </p>
+
           <p>Start: {new Date(b.startTime).toLocaleTimeString()}</p>
+
+          {b.bookingType === "scheduled" && (
+            <p>Scheduled: {new Date(b.startTime).toLocaleString()}</p>
+          )}
 
           <p>
             Actual Start:{" "}
@@ -355,6 +360,40 @@ return (
       placeholder="Name"
     />
 
+    <div style={{ marginTop: "10px" }}>
+      <label style={{ marginRight: "10px" }}>
+        <input
+          type="radio"
+          name="walkInBookingType"
+          value="instant"
+          checked={walkInBookingType === "instant"}
+          onChange={() => setWalkInBookingType("instant")}
+        />
+        Instant
+      </label>
+
+      <label>
+        <input
+          type="radio"
+          name="walkInBookingType"
+          value="scheduled"
+          checked={walkInBookingType === "scheduled"}
+          onChange={() => setWalkInBookingType("scheduled")}
+        />
+        Schedule
+      </label>
+    </div>
+
+    {walkInBookingType === "scheduled" && (
+      <input
+        type="datetime-local"
+        value={walkInScheduledFor}
+        min={getLocalDateTimeValue()}
+        onChange={(e) => setWalkInScheduledFor(e.target.value)}
+        style={{ display: "block", marginTop: "10px" }}
+      />
+    )}
+
    <div>
   {services.map((s) => {
     const isSelected = selectedServices.find(
@@ -367,37 +406,6 @@ return (
         {/* SELECT BUTTON */}
         <button
           onClick={() => toggleServiceSelection(s)}
-          style={{
-            margin: "5px",
-            background: isSelected ? "green" : "lightgray",
-            color: isSelected ? "white" : "black"
-          }}
-        >
-          {s.name} ({s.duration} min)
-        </button>
-
-        {/* DELETE BUTTON */}
-        <button
-  onClick={(e) => {
-    e.stopPropagation();   // 🔥 VERY IMPORTANT
-    console.log("DELETE CLICK:", s._id);
-    deleteService(s._id);
-  }}
-  style={{
-    marginLeft: "5px",
-    background: "red",
-    color: "white",
-    border: "none"
-  }}
->
-  ❌
-</button>
-
-      </div>
-    );
-  })}
-</div>
-
 <button onClick={addOfflineBooking}>
   Add to Queue
 </button>
