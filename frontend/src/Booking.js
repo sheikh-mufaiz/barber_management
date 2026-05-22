@@ -45,24 +45,34 @@ function Booking() {
   // 🔥 Fetch services
   const getServices = async () => {
     if (!barberId) return;
-
-    const res = await fetch(`http://localhost:5000/api/services/${barberId}`);
-    const data = await res.json();
-    setServices(data);
+    try {
+      const res = await fetch(`http://localhost:5000/api/services/${barberId}`);
+      const data = await res.json();
+      setServices(data);
+    } catch (err) {
+      console.error("GET SERVICES ERROR:", err);
+      setServices([]);
+      setMessage("Cannot reach server. Please make sure backend is running.");
+    }
   };
 
   // 🔥 Fetch bookings
   const getBookings = async () => {
     if (!barberId) return;
+    try {
+      const res = await fetch("http://localhost:5000/api/bookings");
+      const data = await res.json();
 
-    const res = await fetch("http://localhost:5000/api/bookings");
-    const data = await res.json();
+      const filtered = data
+        .filter((b) => String(b.barberId) === String(barberId))
+        .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-const filtered = data
-  .filter((b) => String(b.barberId) === String(barberId)) // ✅ FIX
-  .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-
-setBookings(filtered);
+      setBookings(filtered);
+    } catch (err) {
+      console.error("GET BOOKINGS ERROR:", err);
+      setBookings([]);
+      setMessage("Cannot reach server. Please make sure backend is running.");
+    }
   };
 
   useEffect(() => {

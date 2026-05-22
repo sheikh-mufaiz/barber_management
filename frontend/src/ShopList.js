@@ -5,8 +5,12 @@ function ShopList({ setSelectedBarber }) {
 
   useEffect(() => {
     fetch("http://localhost:5000/api/barbers")
-      .then(res => res.json())
-      .then(data => setShops(data));
+      .then((res) => res.json())
+      .then((data) => setShops(data))
+      .catch((err) => {
+        console.error("FETCH BARBERS ERROR:", err);
+        setShops([]);
+      });
   }, []);
 
   return (

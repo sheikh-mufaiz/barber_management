@@ -394,23 +394,26 @@ return (
       />
     )}
 
-   <div>
-  {services.map((s) => {
-    const isSelected = selectedServices.find(
-      (item) => item._id === s._id
-    );
+    <div style={{ marginTop: "10px" }}>
+      {services.map((s) => {
+        const isSelected = selectedServices.find(
+          (item) => item._id === s._id
+        );
 
-    return (
-      <div key={s._id} style={{ marginBottom: "5px" }}>
-        
-        {/* SELECT BUTTON */}
-        <button
-          onClick={() => toggleServiceSelection(s)}
-<button onClick={addOfflineBooking}>
-  Add to Queue
-</button>
+        return (
+          <div key={s._id} style={{ marginBottom: "5px" }}>
+            <button onClick={() => toggleServiceSelection(s)}>
+              {isSelected ? "Remove" : "Select"}
+            </button>{" "}
+            {s.name} ({s.duration} min, Rs {s.price || 0}){" "}
+            <button onClick={() => deleteService(s._id)}>Delete</button>
+          </div>
+        );
+      })}
+    </div>
 
-</div>
+    <button onClick={addOfflineBooking}>Add to Queue</button>
+  </div>
 );
 }
 
