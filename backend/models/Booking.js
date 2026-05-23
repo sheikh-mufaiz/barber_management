@@ -15,6 +15,8 @@ const bookingSchema = new mongoose.Schema(
     },
     scheduledFor: Date,
     startTime: Date,
+    chairId: String,
+    chairName: String,
     isOffline: { type: Boolean, default: false },
     endTime: Date,
     actualStartTime: Date,
@@ -26,5 +28,4 @@ const bookingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Booking", bookingSchema);
 module.exports = mongoose.model("Booking", bookingSchema);

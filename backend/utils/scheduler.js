@@ -1,4 +1,6 @@
 const Booking = require("../models/Booking");
+const User = require("../models/User");
+const { findChairById, getActiveChairs, sanitizeChairs } = require("./chairs");
 
 const ALLOWED_SCHEDULE_DELAY_MINUTES = 5;
 const MINUTE = 60000;
@@ -26,43 +28,262 @@ const sortByScheduled = (a, b) => {
   return aTime - bTime || sortByCreated(a, b);
 };
 
-const applySlot = (booking, startMs) => {
+const applySlot = (booking, startMs, chair) => {
   const endMs = startMs + getDurationMs(booking);
   booking.startTime = new Date(startMs);
   booking.endTime = new Date(endMs);
+  if (chair) {
+    booking.chairId = chair.id;
+    booking.chairName = chair.name;
+  }
   return endMs;
 };
 
-const isScheduledSlotAvailable = (bookings, scheduledStart, totalTime) => {
-  const startMs = getDateValue(scheduledStart);
-  const endMs = startMs + Math.max(0, Number(totalTime || 0)) * MINUTE;
+const sortIntervals = (intervals) =>
+  intervals.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
 
-  if (!startMs || endMs <= startMs) return false;
+const ensureReservationBucket = (reservations, chair) => {
+  if (!reservations.has(chair.id)) {
+    reservations.set(chair.id, []);
+  }
 
-  return !bookings.some((booking) => {
-    const bookingStartMs = getDateValue(booking.startTime);
-    const bookingEndMs = getDateValue(booking.endTime);
-
-    if (!bookingStartMs || !bookingEndMs) return false;
-
-    return startMs < bookingEndMs && endMs > bookingStartMs;
-  });
+  return reservations.get(chair.id);
 };
 
-const arrangeBookings = (bookings, now = new Date()) => {
+const reserveSlot = (reservations, chair, booking, startMs) => {
+  const endMs = applySlot(booking, startMs, chair);
+  const intervals = ensureReservationBucket(reservations, chair);
+
+  intervals.push({
+    startMs,
+    endMs,
+    bookingId: String(booking._id)
+  });
+  sortIntervals(intervals);
+  return endMs;
+};
+
+const findEarliestAvailableSlot = (intervals, durationMs, floorMs) => {
+  let cursor = floorMs;
+
+  for (const interval of sortIntervals([...intervals])) {
+    if (cursor + durationMs <= interval.startMs) {
+      return cursor;
+    }
+
+    if (cursor < interval.endMs) {
+      cursor = interval.endMs;
+    }
+  }
+
+  return cursor;
+};
+
+const resolveInProgressChair = ({
+  booking,
+  chairs,
+  activeChairs,
+  reservations,
+  nowMs
+}) => {
+  const savedChair =
+    findChairById(chairs, booking.chairId) ||
+    (booking.chairName
+      ? {
+          id: booking.chairId || `legacy-chair-${String(booking._id)}`,
+          name: booking.chairName,
+          isActive: false
+        }
+      : null);
+
+  if (savedChair) {
+    return savedChair;
+  }
+
+  if (!activeChairs.length) {
+    return {
+      id: `legacy-chair-${String(booking._id)}`,
+      name: "Unavailable Chair",
+      isActive: false
+    };
+  }
+
+  return activeChairs
+    .map((chair) => {
+      const intervals = ensureReservationBucket(reservations, chair);
+      const latestEnd = intervals.length
+        ? Math.max(...intervals.map((interval) => interval.endMs))
+        : nowMs;
+
+      return { chair, latestEnd };
+    })
+    .sort((a, b) => a.latestEnd - b.latestEnd)[0].chair;
+};
+
+const chooseChairForBooking = (chairs, reservations, durationMs, floorMs) =>
+  chairs
+    .map((chair) => {
+      const intervals = ensureReservationBucket(reservations, chair);
+      const startMs = findEarliestAvailableSlot(intervals, durationMs, floorMs);
+
+      return { chair, startMs };
+    })
+    .sort((a, b) => a.startMs - b.startMs || a.chair.name.localeCompare(b.chair.name))[0] ||
+  null;
+
+const chooseRequestedChairForBooking = (
+  requestedChairId,
+  chairs,
+  reservations,
+  durationMs,
+  floorMs
+) => {
+  const requestedChair = chairs.find((chair) => chair.id === requestedChairId);
+
+  if (!requestedChair) {
+    return null;
+  }
+
+  const intervals = ensureReservationBucket(reservations, requestedChair);
+  const startMs = findEarliestAvailableSlot(intervals, durationMs, floorMs);
+
+  return {
+    chair: requestedChair,
+    startMs
+  };
+};
+
+const cloneBookings = (bookings = []) =>
+  bookings.map((booking) => ({
+    ...booking,
+    services: Array.isArray(booking.services) ? [...booking.services] : booking.services
+  }));
+
+const buildReservedIntervalsByChair = (bookings, chairsInput, now = new Date()) => {
+  const chairs = sanitizeChairs(chairsInput);
+  const arranged = arrangeBookings(cloneBookings(bookings), chairs, now);
+  const reservations = new Map();
+
+  for (const booking of arranged) {
+    const chairId = booking.chairId;
+    const startMs = getDateValue(booking.startTime);
+    const endMs = getDateValue(booking.endTime) || startMs + getDurationMs(booking);
+
+    if (!chairId || !startMs || !endMs) {
+      continue;
+    }
+
+    if (!reservations.has(chairId)) {
+      reservations.set(chairId, []);
+    }
+
+    reservations.get(chairId).push({
+      bookingId: String(booking._id),
+      startMs,
+      endMs
+    });
+  }
+
+  for (const intervals of reservations.values()) {
+    sortIntervals(intervals);
+  }
+
+  return reservations;
+};
+
+const isWindowAvailable = (intervals, startMs, endMs) =>
+  !intervals.some((interval) => startMs < interval.endMs && endMs > interval.startMs);
+
+const findScheduledChairAvailability = ({
+  bookings,
+  chairsInput,
+  scheduledStart,
+  totalTime,
+  requestedChairId = null,
+  now = new Date()
+}) => {
+  const startMs = getDateValue(scheduledStart);
+  const chairs = sanitizeChairs(chairsInput);
+  const activeChairs = getActiveChairs(chairs);
+  const durationMs = Math.max(0, Number(totalTime || 0)) * MINUTE;
+
+  if (!startMs || durationMs <= 0 || !activeChairs.length) {
+    return {
+      available: false,
+      message: "No active chairs available right now"
+    };
+  }
+
+  const requestedChair = requestedChairId
+    ? activeChairs.find((chair) => chair.id === requestedChairId) || null
+    : null;
+
+  if (requestedChairId && !requestedChair) {
+    return {
+      available: false,
+      message: "Selected chair is not available"
+    };
+  }
+
+  const endMs = startMs + durationMs;
+  const reservations = buildReservedIntervalsByChair(bookings, chairs, now);
+  const chairsToCheck = requestedChair ? [requestedChair] : activeChairs;
+  const availableChair = chairsToCheck.find((chair) =>
+    isWindowAvailable(reservations.get(chair.id) || [], startMs, endMs)
+  );
+
+  if (!availableChair) {
+    return {
+      available: false,
+      message: "Requested scheduled slot is already reserved by the current queue"
+    };
+  }
+
+  return {
+    available: true,
+    chairId: availableChair.id,
+    chairName: availableChair.name,
+    estimatedStartTime: new Date(startMs),
+    estimatedEndTime: new Date(endMs)
+  };
+};
+
+const arrangeBookings = (bookings, chairsInput, now = new Date()) => {
+  const chairs = sanitizeChairs(chairsInput);
+  const activeChairs = getActiveChairs(chairs);
   const nowMs = now.getTime();
+  const reservations = new Map();
   const arranged = [];
-  let cursor = nowMs;
 
   const inProgress = bookings
     .filter((booking) => booking.status === "in-progress")
     .sort((a, b) => getDateValue(a.actualStartTime) - getDateValue(b.actualStartTime));
 
   for (const booking of inProgress) {
-    const startMs = getDateValue(booking.actualStartTime) || getDateValue(booking.startTime) || nowMs;
-    const endMs = applySlot(booking, startMs);
-    cursor = Math.max(cursor, endMs);
+    const chair = resolveInProgressChair({
+      booking,
+      chairs,
+      activeChairs,
+      reservations,
+      nowMs
+    });
+    const startMs =
+      getDateValue(booking.actualStartTime) ||
+      getDateValue(booking.startTime) ||
+      nowMs;
+
+    reserveSlot(reservations, chair, booking, startMs);
     arranged.push(booking);
+  }
+
+  if (!activeChairs.length) {
+    const pendingWithoutCapacity = bookings.filter(
+      (booking) => booking.status !== "in-progress"
+    );
+
+    return [...arranged, ...pendingWithoutCapacity].sort(
+      (a, b) => getDateValue(a.startTime) - getDateValue(b.startTime) || sortByCreated(a, b)
+    );
   }
 
   const pending = bookings.filter((booking) => booking.status !== "in-progress");
@@ -73,42 +294,80 @@ const arrangeBookings = (bookings, now = new Date()) => {
     .filter((booking) => booking.bookingType !== "scheduled")
     .sort(sortByCreated);
 
-  while (scheduled.length || instant.length) {
-    const nextScheduled = scheduled[0];
+  for (const booking of scheduled) {
+    const durationMs = getDurationMs(booking);
+    const requestedMs =
+      getDateValue(booking.scheduledFor) ||
+      getDateValue(booking.startTime) ||
+      nowMs;
+    const selected = booking.chairId
+      ? chooseRequestedChairForBooking(
+          booking.chairId,
+          activeChairs,
+          reservations,
+          durationMs,
+          requestedMs
+        )
+      : chooseChairForBooking(
+          activeChairs,
+          reservations,
+          durationMs,
+          requestedMs
+        );
 
-    if (!nextScheduled) {
-      const booking = instant.shift();
-      cursor = applySlot(booking, cursor);
+    if (!selected) {
       arranged.push(booking);
       continue;
     }
 
-    const scheduledStartMs = Math.max(
-      cursor,
-      getDateValue(nextScheduled.scheduledFor) || getDateValue(nextScheduled.startTime) || cursor
-    );
-    const instantFitIndex = instant.findIndex((booking) => {
-      return cursor + getDurationMs(booking) <= scheduledStartMs;
-    });
-
-    if (instantFitIndex !== -1 && cursor <= scheduledStartMs) {
-      const [booking] = instant.splice(instantFitIndex, 1);
-      cursor = applySlot(booking, cursor);
-      arranged.push(booking);
-      continue;
-    }
-
-    const booking = scheduled.shift();
-    cursor = applySlot(booking, scheduledStartMs);
+    reserveSlot(reservations, selected.chair, booking, selected.startMs);
     arranged.push(booking);
   }
 
-  return arranged;
+  for (const booking of instant) {
+    const durationMs = getDurationMs(booking);
+    const selected = chooseChairForBooking(
+      activeChairs,
+      reservations,
+      durationMs,
+      nowMs
+    );
+
+    if (!selected) {
+      arranged.push(booking);
+      continue;
+    }
+
+    reserveSlot(reservations, selected.chair, booking, selected.startMs);
+    arranged.push(booking);
+  }
+
+  return arranged.sort(
+    (a, b) => getDateValue(a.startTime) - getDateValue(b.startTime) || sortByCreated(a, b)
+  );
 };
 
+const isScheduledSlotAvailable = (
+  bookings,
+  chairsInput,
+  scheduledStart,
+  totalTime,
+  requestedChairId = null,
+  now = new Date()
+) =>
+  findScheduledChairAvailability({
+    bookings,
+    chairsInput,
+    scheduledStart,
+    totalTime,
+    requestedChairId,
+    now
+  }).available;
+
 const recalculateQueueForBarber = async (barberId, now = new Date()) => {
+  const barber = await User.findById(barberId);
   const bookings = await Booking.find({ barberId }).sort({ startTime: 1, createdAt: 1 });
-  const arranged = arrangeBookings(bookings, now);
+  const arranged = arrangeBookings(bookings, barber?.chairs, now);
 
   for (const booking of arranged) {
     await booking.save();
@@ -121,13 +380,28 @@ const estimateBookingForBarber = async ({
   barberId,
   totalTime,
   bookingType = "instant",
-  scheduledFor
+  scheduledFor,
+  requestedChairId
 }) => {
   const normalizedBookingType =
     bookingType === "scheduled" ? "scheduled" : "instant";
   const requestedScheduleTime = scheduledFor ? new Date(scheduledFor) : null;
   const numericTotalTime = Number(totalTime);
   const now = new Date();
+  const barber = await User.findById(barberId);
+  const chairs = sanitizeChairs(barber?.chairs);
+  const activeChairs = getActiveChairs(chairs);
+  const requestedChair =
+    normalizedBookingType === "scheduled" && requestedChairId
+      ? activeChairs.find((chair) => chair.id === requestedChairId) || null
+      : null;
+
+  if (!activeChairs.length) {
+    return {
+      available: false,
+      message: "No active chairs available right now"
+    };
+  }
 
   const existingBookings = await Booking.find({ barberId }).sort({
     startTime: 1,
@@ -151,37 +425,56 @@ const estimateBookingForBarber = async ({
       };
     }
 
-    if (
-      !isScheduledSlotAvailable(
-        plainBookings,
-        requestedScheduleTime,
-        numericTotalTime
-      )
-    ) {
+    if (requestedChairId && !requestedChair) {
       return {
         available: false,
-        message: "No slot available at this scheduled time"
+        message: "Selected chair is not available"
       };
     }
+
+    const scheduledAvailability = findScheduledChairAvailability({
+      bookings: plainBookings,
+      chairsInput: chairs,
+      scheduledStart: requestedScheduleTime,
+      totalTime: numericTotalTime,
+      requestedChairId,
+      now
+    });
+
+    if (!scheduledAvailability.available) {
+      return scheduledAvailability;
+    }
+
+    return {
+      available: true,
+      estimatedStartTime: scheduledAvailability.estimatedStartTime,
+      estimatedEndTime: scheduledAvailability.estimatedEndTime,
+      chairId: scheduledAvailability.chairId,
+      chairName: scheduledAvailability.chairName,
+      waitMinutes: Math.max(
+        0,
+        Math.floor((scheduledAvailability.estimatedStartTime.getTime() - now.getTime()) / MINUTE)
+      )
+    };
   }
 
-  const start =
-    normalizedBookingType === "scheduled" ? requestedScheduleTime : now;
+  const start = now;
   const previewId = "__preview_booking__";
   const previewBooking = {
     _id: previewId,
     barberId,
     totalTime: numericTotalTime,
     bookingType: normalizedBookingType,
-    scheduledFor:
-      normalizedBookingType === "scheduled" ? requestedScheduleTime : null,
+    scheduledFor: null,
+    chairId: null,
+    chairName: null,
     startTime: start,
     endTime: new Date(start.getTime() + numericTotalTime * MINUTE),
     status: "booked",
     createdAt: now
   };
 
-  const arranged = arrangeBookings([...plainBookings, previewBooking], now);
+  const arranged = arrangeBookings([...plainBookings, previewBooking], chairs, now);
   const estimatedBooking = arranged.find((booking) => booking._id === previewId);
 
   if (!estimatedBooking) {
@@ -198,6 +491,8 @@ const estimateBookingForBarber = async ({
     available: true,
     estimatedStartTime,
     estimatedEndTime,
+    chairId: estimatedBooking.chairId,
+    chairName: estimatedBooking.chairName,
     waitMinutes: Math.max(
       0,
       Math.floor((estimatedStartTime.getTime() - now.getTime()) / MINUTE)
@@ -216,7 +511,9 @@ const recalculateAllQueues = async () => {
 module.exports = {
   ALLOWED_SCHEDULE_DELAY_MINUTES,
   arrangeBookings,
+  buildReservedIntervalsByChair,
   estimateBookingForBarber,
+  findScheduledChairAvailability,
   isScheduledSlotAvailable,
   recalculateQueueForBarber,
   recalculateAllQueues

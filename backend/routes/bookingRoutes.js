@@ -4,7 +4,6 @@ const Booking = require("../models/Booking");
 const Service = require("../models/Service");
 const {
   estimateBookingForBarber,
-  isScheduledSlotAvailable,
   recalculateQueueForBarber
 } = require("../utils/scheduler");
 
@@ -15,7 +14,8 @@ router.post("/estimate-booking", async (req, res) => {
       barberId,
       totalTime,
       bookingType = "instant",
-      scheduledFor
+      scheduledFor,
+      chairId
     } = req.body;
 
     if (!barberId || !totalTime) {
@@ -29,7 +29,8 @@ router.post("/estimate-booking", async (req, res) => {
       barberId,
       totalTime,
       bookingType,
-      scheduledFor
+      scheduledFor,
+      requestedChairId: bookingType === "scheduled" ? chairId : null
     });
 
     res.status(estimate.available ? 200 : 409).json(estimate);
@@ -53,7 +54,8 @@ router.post("/book", async (req, res) => {
       customerId,
       isOffline,
       bookingType = "instant",
-      scheduledFor
+      scheduledFor,
+      chairId
     } = req.body;
 
     const normalizedBookingType =
@@ -99,30 +101,20 @@ router.post("/book", async (req, res) => {
       }
     }
 
-    if (normalizedBookingType === "scheduled") {
-      await recalculateQueueForBarber(barberId);
+    const estimate = await estimateBookingForBarber({
+      barberId,
+      totalTime,
+      bookingType: normalizedBookingType,
+      scheduledFor: requestedScheduleTime,
+      requestedChairId:
+        normalizedBookingType === "scheduled" ? chairId : null
+    });
 
-      const existingBookings = await Booking.find({ barberId }).sort({
-        startTime: 1
+    if (!estimate.available) {
+      return res.status(409).json({
+        message: estimate.message || "No slot available right now"
       });
-      const slotAvailable = isScheduledSlotAvailable(
-        existingBookings,
-        requestedScheduleTime,
-        totalTime
-      );
-
-      if (!slotAvailable) {
-        return res.status(409).json({
-          message: "No slot available at this scheduled time"
-        });
-      }
     }
-
-    const start =
-      normalizedBookingType === "scheduled"
-        ? requestedScheduleTime
-        : new Date();
-    const end = new Date(start.getTime() + Number(totalTime) * 60000);
 
     const booking = new Booking({
       barberId,
@@ -131,8 +123,10 @@ router.post("/book", async (req, res) => {
       bookingType: normalizedBookingType,
       scheduledFor:
         normalizedBookingType === "scheduled" ? requestedScheduleTime : null,
-      startTime: start,
-      endTime: end,
+      startTime: estimate.estimatedStartTime,
+      endTime: estimate.estimatedEndTime,
+      chairId: estimate.chairId,
+      chairName: estimate.chairName,
       customerName,
       customerId: customerId || null, // ✅ SAFE
       orderId: Date.now().toString(),
@@ -267,12 +261,15 @@ router.put("/start/:id", async (req, res) => {
     booking.actualStartTime = new Date();
 
     await booking.save();
+    await recalculateQueueForBarber(booking.barberId);
+
+    const updatedBooking = await Booking.findById(req.params.id);
 
     console.log("START SAVED:", booking.actualStartTime); // ✅ DEBUG
 
     res.json({
       success: true,
-      booking,
+      booking: updatedBooking || booking,
     });
 
   } catch (err) {

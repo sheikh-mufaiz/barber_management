@@ -1,14 +1,19 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import ShopList from "./ShopList";
+import QueueBoard from "./QueueBoard";
+
+const API_URL = "http://localhost:5000/api";
 
 function Booking() {
   const [services, setServices] = useState([]);
+  const [chairs, setChairs] = useState([]);
   const [selectedServices, setSelectedServices] = useState([]);
   const [message, setMessage] = useState("");
   const [bookings, setBookings] = useState([]);
   const [selectedBarber, setSelectedBarber] = useState(null);
   const [bookingType, setBookingType] = useState("instant");
   const [scheduledFor, setScheduledFor] = useState("");
+  const [selectedChairId, setSelectedChairId] = useState("");
   const [bookingEstimate, setBookingEstimate] = useState(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
 
@@ -32,21 +37,20 @@ function Booking() {
     return Math.max(0, Math.floor((start.getTime() - Date.now()) / 60000));
   };
 
-  const selectedTotalTime = selectedServices.reduce(
-    (sum, s) => sum + s.duration,
-    0
-  );
+  const selectedTotalTime = selectedServices.reduce((sum, service) => sum + service.duration, 0);
+  const activeChairs = chairs.filter((chair) => chair.isActive);
 
   const bookDisabled =
     selectedServices.length === 0 ||
     (bookingType === "scheduled" && !scheduledFor) ||
-    (bookingType === "scheduled" && bookingEstimate?.available === false);
+    (bookingType === "scheduled" && !selectedChairId) ||
+    Boolean(selectedServices.length && bookingEstimate?.available === false);
 
-  // 🔥 Fetch services
   const getServices = async () => {
     if (!barberId) return;
+
     try {
-      const res = await fetch(`http://localhost:5000/api/services/${barberId}`);
+      const res = await fetch(`${API_URL}/services/${barberId}`);
       const data = await res.json();
       setServices(data);
     } catch (err) {
@@ -56,15 +60,15 @@ function Booking() {
     }
   };
 
-  // 🔥 Fetch bookings
   const getBookings = async () => {
     if (!barberId) return;
+
     try {
-      const res = await fetch("http://localhost:5000/api/bookings");
+      const res = await fetch(`${API_URL}/bookings`);
       const data = await res.json();
 
       const filtered = data
-        .filter((b) => String(b.barberId) === String(barberId))
+        .filter((booking) => String(booking.barberId) === String(barberId))
         .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
       setBookings(filtered);
@@ -75,12 +79,28 @@ function Booking() {
     }
   };
 
+  const getChairs = async () => {
+    if (!barberId) return;
+
+    try {
+      const res = await fetch(`${API_URL}/chairs/${barberId}`);
+      const data = await res.json();
+      setChairs(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error("GET CHAIRS ERROR:", err);
+      setChairs([]);
+    }
+  };
+
   useEffect(() => {
     setSelectedServices([]);
     setBookingEstimate(null);
+    setMessage("");
+    setSelectedChairId("");
 
     getServices();
     getBookings();
+    getChairs();
 
     const interval = setInterval(() => {
       getBookings();
@@ -106,7 +126,7 @@ function Booking() {
       try {
         setEstimateLoading(true);
 
-        const res = await fetch("http://localhost:5000/api/estimate-booking", {
+        const res = await fetch(`${API_URL}/estimate-booking`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -115,7 +135,8 @@ function Booking() {
             barberId,
             totalTime: selectedTotalTime,
             bookingType,
-            scheduledFor: bookingType === "scheduled" ? scheduledFor : null
+            scheduledFor: bookingType === "scheduled" ? scheduledFor : null,
+            chairId: bookingType === "scheduled" ? selectedChairId : null
           })
         });
 
@@ -144,28 +165,19 @@ function Booking() {
     return () => {
       ignore = true;
     };
-  }, [
-    barberId,
-    selectedServices,
-    selectedTotalTime,
-    bookingType,
-    scheduledFor
-  ]);
+  }, [barberId, selectedServices, selectedTotalTime, bookingType, scheduledFor, selectedChairId]);
 
-  // 🔥 Toggle services
   const toggleService = (service) => {
-    const exists = selectedServices.find((s) => s._id === service._id);
+    const exists = selectedServices.find((item) => item._id === service._id);
 
     if (exists) {
-      setSelectedServices(
-        selectedServices.filter((s) => s._id !== service._id)
-      );
-    } else {
-      setSelectedServices([...selectedServices, service]);
+      setSelectedServices(selectedServices.filter((item) => item._id !== service._id));
+      return;
     }
+
+    setSelectedServices([...selectedServices, service]);
   };
 
-  // 🔥 Book service
   const handleBooking = async () => {
     if (selectedServices.length === 0) {
       setMessage("Please select at least one service");
@@ -177,30 +189,36 @@ function Booking() {
       return;
     }
 
-    // ✅ FIXED DUPLICATE CHECK (only by customerId)
-    const existing = bookings.find(b => b.customerId === user._id);
+    if (bookingType === "scheduled" && !selectedChairId) {
+      setMessage("Please select a chair");
+      return;
+    }
+
+    const existing = bookings.find((booking) => booking.customerId === user._id);
 
     if (existing) {
       const confirmBooking = window.confirm(
-        "⚠️ You already have an active booking.\nDo you want to create another one?"
+        "You already have an active booking.\nDo you want to create another one?"
       );
+
       if (!confirmBooking) return;
     }
 
-    const res = await fetch("http://localhost:5000/api/book", {
+    const res = await fetch(`${API_URL}/book`, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
       },
       body: JSON.stringify({
         barberId,
-        services: selectedServices.map((s) => s.name),
+        services: selectedServices.map((service) => service.name),
         totalTime: selectedTotalTime,
         customerName: user.name,
         customerId: user._id,
         bookingType,
-        scheduledFor: bookingType === "scheduled" ? scheduledFor : null
-      }),
+        scheduledFor: bookingType === "scheduled" ? scheduledFor : null,
+        chairId: bookingType === "scheduled" ? selectedChairId : null
+      })
     });
 
     const data = await res.json();
@@ -211,13 +229,13 @@ function Booking() {
     setSelectedServices([]);
     setBookingType("instant");
     setScheduledFor("");
+    setSelectedChairId("");
     setBookingEstimate(null);
     getBookings();
   };
 
-  // 🔥 Cancel booking
   const cancelBooking = async (id) => {
-    await fetch(`http://localhost:5000/api/cancel/${id}`, {
+    await fetch(`${API_URL}/cancel/${id}`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json"
@@ -233,48 +251,42 @@ function Booking() {
 
   return (
     <div style={{ padding: "20px", fontFamily: "Arial" }}>
-      <h1>Barber Booking App ✂️</h1>
+      <h1>Barber Booking App</h1>
 
-      {!selectedBarber && (
-        <ShopList setSelectedBarber={setSelectedBarber} />
-      )}
+      {!selectedBarber && <ShopList setSelectedBarber={setSelectedBarber} />}
 
       {selectedBarber && (
         <>
-          <button onClick={() => setSelectedBarber(null)}>
-            🔙 Change Shop
-          </button>
+          <button onClick={() => setSelectedBarber(null)}>Change Shop</button>
 
           <h2>{selectedBarber.shopName}</h2>
 
           <h3>Select Services</h3>
 
-          {services.map((s) => (
+          {services.map((service) => (
             <div
-              key={s._id}
-              onClick={() => toggleService(s)}
+              key={service._id}
+              onClick={() => toggleService(service)}
               style={{
                 border: "1px solid #ccc",
                 padding: "10px",
                 marginBottom: "10px",
                 borderRadius: "8px",
                 cursor: "pointer",
-                background: selectedServices.find(
-                  (x) => x._id === s._id
-                )
+                background: selectedServices.find((item) => item._id === service._id)
                   ? "#ddd"
-                  : "white",
+                  : "white"
               }}
             >
-              <p><b>{s.name}</b></p>
-              <p>⏱ {s.duration} min</p>
-              <p>₹ {s.price}</p>
+              <p>
+                <b>{service.name}</b>
+              </p>
+              <p>{service.duration} min</p>
+              <p>Rs {service.price}</p>
             </div>
           ))}
 
-          <p>
-            Total Time: {selectedTotalTime} min
-          </p>
+          <p>Total Time: {selectedTotalTime} min</p>
 
           {selectedServices.length > 0 && (
             <div
@@ -292,11 +304,10 @@ function Booking() {
                 <>
                   <p>
                     Expected start:{" "}
-                    {new Date(
-                      bookingEstimate.estimatedStartTime
-                    ).toLocaleTimeString()}
+                    {new Date(bookingEstimate.estimatedStartTime).toLocaleTimeString()}
                   </p>
                   <p>Waiting: {bookingEstimate.waitMinutes || 0} min</p>
+                  <p>Chair: {bookingEstimate.chairName || "Auto assigned"}</p>
                 </>
               ) : bookingEstimate?.message ? (
                 <p style={{ color: "red" }}>{bookingEstimate.message}</p>
@@ -331,20 +342,32 @@ function Booking() {
           </div>
 
           {bookingType === "scheduled" && (
-            <input
-              type="datetime-local"
-              value={scheduledFor}
-              min={getLocalDateTimeValue()}
-              onChange={(e) => setScheduledFor(e.target.value)}
-              style={{ display: "block", marginTop: "10px" }}
-            />
+            <>
+              <input
+                type="datetime-local"
+                value={scheduledFor}
+                min={getLocalDateTimeValue()}
+                onChange={(e) => setScheduledFor(e.target.value)}
+                style={{ display: "block", marginTop: "10px" }}
+              />
+
+              <select
+                value={selectedChairId}
+                onChange={(e) => setSelectedChairId(e.target.value)}
+                style={{ display: "block", marginTop: "10px" }}
+              >
+                <option value="">Select Chair</option>
+                {activeChairs.map((chair) => (
+                  <option key={chair.id} value={chair.id}>
+                    {chair.name}
+                  </option>
+                ))}
+              </select>
+            </>
           )}
 
-          {/* 🔥 WARNING UI */}
-          {bookings.some(b => b.customerId === user._id) && (
-            <p style={{ color: "red" }}>
-              ⚠️ You already have an active booking
-            </p>
+          {bookings.some((booking) => booking.customerId === user._id) && (
+            <p style={{ color: "red" }}>You already have an active booking</p>
           )}
 
           <button
@@ -357,72 +380,54 @@ function Booking() {
 
           <p>{message}</p>
 
-          <h3>Current Queue</h3>
+          <QueueBoard chairs={chairs} bookings={bookings} title="Current Queue" />
 
-          {bookings.length === 0 ? (
-            <p>No bookings yet</p>
+          <h3>Your Active Bookings</h3>
+
+          {bookings.filter((booking) => booking.customerId === user._id).length === 0 ? (
+            <p>You do not have any active bookings.</p>
           ) : (
-            bookings.map((b, index) => {
+            bookings
+              .filter((booking) => booking.customerId === user._id)
+              .map((booking) => {
+                const waitTime = getWaitTime(booking);
 
-              const waitTime = getWaitTime(b);
-
-              // ✅ Repeat logic (only by customerId)
-              const visitCount = bookings.filter(
-                (x) => x.customerId === b.customerId
-              ).length;
-
-              return (
-                <div
-                  key={b._id}
-                  style={{
-                    border: "1px solid #ccc",
-                    padding: "10px",
-                    marginBottom: "10px",
-                    borderRadius: "8px"
-                  }}
-                >
-                  <p>
-                    {index + 1}. {b.services.join(", ")} -{" "}
-                    {b.actualStartTime
-  ? new Date(b.actualStartTime).toLocaleTimeString()
-  : "Waiting"}
-                  </p>
-
-                  <p>👤 {b.customerName}</p>
-                  <p>🆔 {b.orderId}</p>
-                  <p>
-                    Type:{" "}
-                    {b.bookingType === "scheduled" ? "Scheduled" : "Instant"}
-                  </p>
-                  {b.bookingType === "scheduled" && (
+                return (
+                  <div
+                    key={booking._id}
+                    style={{
+                      border: "1px solid #ccc",
+                      padding: "10px",
+                      marginBottom: "10px",
+                      borderRadius: "8px"
+                    }}
+                  >
                     <p>
-                      Scheduled: {new Date(b.startTime).toLocaleString()}
+                      {booking.services.join(", ")} -{" "}
+                      {booking.actualStartTime
+                        ? new Date(booking.actualStartTime).toLocaleTimeString()
+                        : "Waiting"}
                     </p>
-                  )}
 
-                  {index === 0 && b.actualStartTime ? (
-  <p style={{ color: "green" }}>
-    🟢 In Progress ({waitTime} min left)
-  </p>
-) : (
-  <p>⏱ Waiting: {waitTime} min</p>
-)}
+                    <p>{booking.customerName}</p>
+                    <p>Order: {booking.orderId}</p>
+                    <p>Chair: {booking.chairName || "Auto assigning"}</p>
+                    <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
 
-                  {visitCount > 1 && (
-                    <p style={{ color: "orange" }}>
-                      🔁 Repeat ({visitCount})
-                    </p>
-                  )}
+                    {booking.bookingType === "scheduled" && (
+                      <p>Scheduled: {new Date(booking.startTime).toLocaleString()}</p>
+                    )}
 
-                  {/* ✅ FIXED CANCEL */}
-                  {b.customerId === user._id && (
-                    <button onClick={() => cancelBooking(b._id)}>
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              );
-            })
+                    {booking.status === "in-progress" ? (
+                      <p style={{ color: "green" }}>In Progress ({waitTime} min left)</p>
+                    ) : (
+                      <p>Waiting: {waitTime} min</p>
+                    )}
+
+                    <button onClick={() => cancelBooking(booking._id)}>Cancel</button>
+                  </div>
+                );
+              })
           )}
         </>
       )}

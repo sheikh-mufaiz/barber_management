@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const chairSchema = require("./Chair");
 
 const userSchema = new mongoose.Schema({
   name: String,
@@ -14,7 +15,11 @@ const userSchema = new mongoose.Schema({
     lng: Number
   },
   address: String,
-  isOpen: { type: Boolean, default: true }
+  isOpen: { type: Boolean, default: true },
+  chairs: {
+    type: [chairSchema],
+    default: [{ id: "chair-1", name: "Chair 1", isActive: true }]
+  }
   
 });
 

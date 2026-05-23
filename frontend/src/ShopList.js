@@ -25,6 +25,10 @@ function ShopList({ setSelectedBarber }) {
         >
           <p><b>{shop.shopName}</b></p>
           <p>{shop.phone}</p>
+          <p>
+            Active chairs:{" "}
+            {(shop.chairs || []).filter((chair) => chair.isActive).length || 0}
+          </p>
         </div>
       ))}
     </div>

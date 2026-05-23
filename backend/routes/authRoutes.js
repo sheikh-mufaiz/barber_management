@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
+const { getActiveChairs, sanitizeChairs } = require("../utils/chairs");
 
 // ✅ Register
 router.post("/register", async (req, res) => {
@@ -14,6 +15,7 @@ router.post("/register", async (req, res) => {
       phone,
       location,
       address,
+      chairs
     } = req.body;
 
     // 🔥 Check if user already exists
@@ -35,6 +37,7 @@ router.post("/register", async (req, res) => {
       phone,
       location,
       address,
+      chairs: role === "barber" ? sanitizeChairs(chairs) : undefined
     });
 
     await user.save();
@@ -60,6 +63,12 @@ router.put("/toggle-shop/:id", async (req, res) => {
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
+    }
+
+    if (!user.isOpen && user.role === "barber" && !getActiveChairs(user.chairs).length) {
+      return res.status(400).json({
+        message: "Add at least one active chair before opening the shop"
+      });
     }
 
     user.isOpen = !user.isOpen;
@@ -90,6 +99,57 @@ router.get("/barbers", async (req, res) => {
 
   } catch (error) {
     console.error("FETCH BARBERS ERROR:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.get("/chairs/:barberId", async (req, res) => {
+  try {
+    const barber = await User.findById(req.params.barberId);
+
+    if (!barber || barber.role !== "barber") {
+      return res.status(404).json({ message: "Barber not found" });
+    }
+
+    const chairs = sanitizeChairs(barber.chairs);
+
+    if (JSON.stringify(chairs) !== JSON.stringify(barber.chairs || [])) {
+      barber.chairs = chairs;
+      await barber.save();
+    }
+
+    res.json(chairs);
+  } catch (error) {
+    console.error("FETCH CHAIRS ERROR:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+router.put("/chairs/:barberId", async (req, res) => {
+  try {
+    const barber = await User.findById(req.params.barberId);
+
+    if (!barber || barber.role !== "barber") {
+      return res.status(404).json({ message: "Barber not found" });
+    }
+
+    const chairs = sanitizeChairs(req.body?.chairs);
+
+    if (barber.isOpen && !getActiveChairs(chairs).length) {
+      return res.status(400).json({
+        message: "Keep at least one active chair while the shop is open"
+      });
+    }
+
+    barber.chairs = chairs;
+    await barber.save();
+
+    res.json({
+      message: "Chairs updated",
+      chairs
+    });
+  } catch (error) {
+    console.error("UPDATE CHAIRS ERROR:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
