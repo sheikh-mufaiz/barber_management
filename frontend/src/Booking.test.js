@@ -80,6 +80,8 @@ describe("Booking customer navigation", () => {
             customerId: "customer-1",
             customerName: "Aman",
             services: ["Wax"],
+            serviceItems: [{ name: "Wax", duration: 10, price: 50 }],
+            totalPrice: 50,
             orderId: "5678",
             totalTime: 10,
             bookingType: "instant",
@@ -171,6 +173,8 @@ describe("Booking customer navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByText("Order History")).toBeInTheDocument();
     expect(screen.getByText("Order: 5678")).toBeInTheDocument();
+    expect(screen.getByText("Total: Rs 50")).toBeInTheDocument();
+    expect(screen.getAllByText("Snapshot: Wax (Rs 50)").length).toBeGreaterThan(0);
     expect(screen.queryByText("Your Active Bookings")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Profile" }));

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import BarberDashboard from "./BarberDashboard";
 
@@ -11,6 +11,100 @@ const createFetchResponse = (data) =>
     ok: true,
     json: async () => data
   });
+
+const buildAnalyticsResponse = ({
+  totalBookings,
+  estimatedRevenue,
+  servicePopularity,
+  peakBookingHours,
+  totalPlatformBookings,
+  customerGrowth,
+  cancellationRate,
+  totalBarbers,
+  openShops,
+  topPerformingShops
+}) => ({
+  range: {
+    preset: "today",
+    start: "2026-05-24T00:00:00.000Z",
+    end: "2026-05-24T23:59:59.999Z"
+  },
+  barberMetrics: {
+    totalBookings,
+    estimatedRevenue,
+    servicePopularity,
+    peakBookingHours
+  },
+  platformMetrics: {
+    allBarberOverview: {
+      totalBarbers,
+      openShops
+    },
+    totalPlatformBookings,
+    customerGrowth,
+    cancellationRate,
+    topPerformingShops
+  },
+  topPerformingShops
+});
+
+const analyticsByPreset = {
+  today: buildAnalyticsResponse({
+    totalBookings: 1,
+    estimatedRevenue: 100,
+    servicePopularity: [["Haircut", 1]],
+    peakBookingHours: [["09:00", 1]],
+    totalPlatformBookings: 3,
+    customerGrowth: 2,
+    cancellationRate: 33.3,
+    totalBarbers: 2,
+    openShops: 1,
+    topPerformingShops: [
+      { barberId: "barber-1", shopName: "Style Studio", barberName: "Barber One", bookings: 2 },
+      { barberId: "barber-2", shopName: "Fade House", barberName: "Barber Two", bookings: 1 }
+    ]
+  }),
+  week: buildAnalyticsResponse({
+    totalBookings: 4,
+    estimatedRevenue: 450,
+    servicePopularity: [["Haircut", 3], ["Wax", 1]],
+    peakBookingHours: [["10:00", 2], ["14:00", 2]],
+    totalPlatformBookings: 8,
+    customerGrowth: 5,
+    cancellationRate: 12.5,
+    totalBarbers: 3,
+    openShops: 2,
+    topPerformingShops: [
+      { barberId: "barber-1", shopName: "Style Studio", barberName: "Barber One", bookings: 4 }
+    ]
+  }),
+  month: buildAnalyticsResponse({
+    totalBookings: 9,
+    estimatedRevenue: 980,
+    servicePopularity: [["Haircut", 5], ["Wax", 2], ["Beard", 2]],
+    peakBookingHours: [["11:00", 3]],
+    totalPlatformBookings: 20,
+    customerGrowth: 11,
+    cancellationRate: 20,
+    totalBarbers: 4,
+    openShops: 3,
+    topPerformingShops: [
+      { barberId: "barber-3", shopName: "Clip Joint", barberName: "Barber Three", bookings: 7 }
+    ]
+  }),
+  customFilled: buildAnalyticsResponse({
+    totalBookings: 0,
+    estimatedRevenue: 0,
+    servicePopularity: [],
+    peakBookingHours: [],
+    totalPlatformBookings: 0,
+    customerGrowth: 0,
+    cancellationRate: 0,
+    totalBarbers: 2,
+    openShops: 1,
+    topPerformingShops: []
+  })
+};
 
 describe("BarberDashboard navigation", () => {
   beforeEach(() => {
@@ -33,9 +127,7 @@ describe("BarberDashboard navigation", () => {
       }
 
       if (url.includes("/chairs/")) {
-        return createFetchResponse([
-          { id: "chair-1", name: "Chair 1", isActive: true }
-        ]);
+        return createFetchResponse([{ id: "chair-1", name: "Chair 1", isActive: true }]);
       }
 
       if (url.includes("/bookings")) {
@@ -59,6 +151,7 @@ describe("BarberDashboard navigation", () => {
             customerId: "customer-2",
             customerName: "Riya",
             services: ["Wax"],
+            serviceItems: [{ name: "Wax", duration: 10, price: 50 }],
             orderId: "5678",
             totalTime: 10,
             bookingType: "instant",
@@ -95,6 +188,19 @@ describe("BarberDashboard navigation", () => {
         ]);
       }
 
+      if (url.includes("/analytics/overview")) {
+        const requestUrl = new URL(url);
+        const preset = requestUrl.searchParams.get("rangePreset");
+        const startDate = requestUrl.searchParams.get("startDate");
+        const endDate = requestUrl.searchParams.get("endDate");
+
+        if (preset === "custom" && startDate && endDate) {
+          return createFetchResponse(analyticsByPreset.customFilled);
+        }
+
+        return createFetchResponse(analyticsByPreset[preset] || analyticsByPreset.today);
+      }
+
       return createFetchResponse({});
     });
   });
@@ -125,6 +231,8 @@ describe("BarberDashboard navigation", () => {
     expect(screen.getByText("Order History")).toBeInTheDocument();
     expect(screen.getByText("Riya")).toBeInTheDocument();
     expect(screen.getByText("Favorite Service: Wax")).toBeInTheDocument();
+    expect(screen.getByText("Total: Rs 50")).toBeInTheDocument();
+    expect(screen.getByText("Snapshot: Wax (Rs 50)")).toBeInTheDocument();
     expect(screen.queryByText("1. Aman")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Chairs" }));
@@ -134,16 +242,75 @@ describe("BarberDashboard navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Walk-ins" }));
     expect(screen.getByText("Add Walk-in")).toBeInTheDocument();
     expect(screen.queryByText("Manage Chairs")).not.toBeInTheDocument();
+  });
+
+  test("loads platform analytics, switches date presets, and waits for a full custom range", async () => {
+    render(<BarberDashboard />);
 
     await userEvent.click(screen.getByRole("button", { name: "Analytics" }));
-    expect(screen.getByText("Analytics Dashboard")).toBeInTheDocument();
-    expect(screen.getByText("Total Bookings")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
-    expect(screen.getByText("Estimated Revenue")).toBeInTheDocument();
-    expect(screen.getByText("Rs 150")).toBeInTheDocument();
-    expect(screen.getByText("Most Popular Service")).toBeInTheDocument();
-    expect(screen.getByText("Haircut")).toBeInTheDocument();
-    expect(screen.getByText("Peak Booking Hours")).toBeInTheDocument();
-    expect(screen.queryByText("Add Walk-in")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Barber Performance")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Platform Overview")).toBeInTheDocument();
+    expect(screen.getByText("Total Platform Bookings")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("Customer Growth")).toBeInTheDocument();
+    expect(screen.getByText("New customers in this period")).toBeInTheDocument();
+    expect(screen.getByText("Cancellation Rate")).toBeInTheDocument();
+    expect(screen.getByText("33.3%")).toBeInTheDocument();
+    expect(screen.getByText("Top Performing Shops")).toBeInTheDocument();
+    expect(screen.getByText("1. Style Studio")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "This Week" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rs 450")).toBeInTheDocument();
+    });
+    expect(screen.getByText("12.5%")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "This Month" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Rs 980")).toBeInTheDocument();
+    });
+    expect(screen.getByText("20.0%")).toBeInTheDocument();
+    expect(screen.getByText("1. Clip Joint")).toBeInTheDocument();
+
+    const analyticsCallsBeforeCustom = global.fetch.mock.calls.filter(([url]) =>
+      url.includes("/analytics/overview")
+    ).length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Custom Range" }));
+
+    expect(screen.getByLabelText("Analytics start date")).toBeInTheDocument();
+    expect(screen.getByLabelText("Analytics end date")).toBeInTheDocument();
+    expect(screen.getByText("Select both dates to load a custom analytics range.")).toBeInTheDocument();
+
+    const analyticsCallsAfterCustomToggle = global.fetch.mock.calls.filter(([url]) =>
+      url.includes("/analytics/overview")
+    ).length;
+    expect(analyticsCallsAfterCustomToggle).toBe(analyticsCallsBeforeCustom);
+
+    fireEvent.change(screen.getByLabelText("Analytics start date"), {
+      target: { value: "2026-05-01" }
+    });
+
+    const analyticsCallsAfterStartOnly = global.fetch.mock.calls.filter(([url]) =>
+      url.includes("/analytics/overview")
+    ).length;
+    expect(analyticsCallsAfterStartOnly).toBe(analyticsCallsBeforeCustom);
+
+    fireEvent.change(screen.getByLabelText("Analytics end date"), {
+      target: { value: "2026-05-02" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("No service data yet.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("No shop performance data yet.")).toBeInTheDocument();
+    expect(screen.getAllByText("0")[0]).toBeInTheDocument();
+    expect(screen.getByText("0.0%")).toBeInTheDocument();
   });
 });

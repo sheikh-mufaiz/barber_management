@@ -3,6 +3,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const { recalculateAllQueues } = require("./utils/scheduler");
+const { backfillLegacyBookingSnapshots } = require("./utils/bookingSnapshots");
 
 const app = express();
 app.use(express.json());
@@ -26,7 +27,12 @@ app.get("/", (req, res) => {
 
 // ✅ MongoDB connection
 mongoose.connect("mongodb+srv://admin:admin123@cluster0.6ahzbd4.mongodb.net/barberApp")
-  .then(() => console.log("MongoDB Connected"))
+  .then(async () => {
+    console.log("MongoDB Connected");
+
+    const backfillResult = await backfillLegacyBookingSnapshots();
+    console.log(`Booking snapshot backfill complete: ${backfillResult.updated} updated`);
+  })
   .catch(err => console.log(err));
 
 

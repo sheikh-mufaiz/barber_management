@@ -3,10 +3,21 @@ import QueueBoard from "./QueueBoard";
 import { useNotifications } from "./NotificationContext";
 import { detectBookingNotifications } from "./bookingNotifications";
 import { formatCurrency, getBadgeClassName, getDefaultProfile } from "./loyalty";
+import {
+  getBookingServiceItems,
+  getBookingServiceNames,
+  getBookingTotalPrice
+} from "./bookingSnapshots";
 
 const API_URL = "http://localhost:5000/api";
 
 function BarberDashboard() {
+  const analyticsPresets = [
+    { id: "today", label: "Today" },
+    { id: "week", label: "This Week" },
+    { id: "month", label: "This Month" },
+    { id: "custom", label: "Custom Range" }
+  ];
   const [activeSection, setActiveSection] = useState("queue");
   const [name, setName] = useState("");
   const [duration, setDuration] = useState("");
@@ -19,6 +30,12 @@ function BarberDashboard() {
   const [selectedServices, setSelectedServices] = useState([]);
   const [walkInBookingType, setWalkInBookingType] = useState("instant");
   const [walkInScheduledFor, setWalkInScheduledFor] = useState("");
+  const [analyticsPreset, setAnalyticsPreset] = useState("today");
+  const [analyticsCustomStart, setAnalyticsCustomStart] = useState("");
+  const [analyticsCustomEnd, setAnalyticsCustomEnd] = useState("");
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
   const [customerProfiles, setCustomerProfiles] = useState({});
   const previousBookingsRef = useRef([]);
   const hasLoadedBookingsRef = useRef(false);
@@ -33,7 +50,6 @@ function BarberDashboard() {
   const bookingHistory = bookings.filter(
     (booking) => booking.status === "completed" || booking.status === "cancelled"
   );
-  const analyticsBookings = bookings.filter((booking) => booking.status !== "cancelled");
   const dashboardSections = [
     { id: "queue", label: "Queue" },
     { id: "analytics", label: "Analytics" },
@@ -140,6 +156,54 @@ function BarberDashboard() {
     return local.toISOString().slice(0, 16);
   };
 
+  const getLocalDateValue = (date = new Date()) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
+  };
+
+  const getAnalyticsRange = (preset) => {
+    const now = new Date();
+    const start = new Date(now);
+    const end = new Date(now);
+
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    if (preset === "week") {
+      const day = start.getDay();
+      const diffToMonday = (day + 6) % 7;
+      start.setDate(start.getDate() - diffToMonday);
+    } else if (preset === "month") {
+      start.setDate(1);
+    } else if (preset === "custom") {
+      if (!analyticsCustomStart || !analyticsCustomEnd) {
+        return null;
+      }
+
+      const customStart = new Date(analyticsCustomStart);
+      const customEnd = new Date(analyticsCustomEnd);
+
+      if (Number.isNaN(customStart.getTime()) || Number.isNaN(customEnd.getTime())) {
+        return null;
+      }
+
+      customStart.setHours(0, 0, 0, 0);
+      customEnd.setHours(23, 59, 59, 999);
+
+      return {
+        start: customStart.toISOString(),
+        end: customEnd.toISOString()
+      };
+    }
+
+    return {
+      start: start.toISOString(),
+      end: end.toISOString()
+    };
+  };
+
+  const formatPercentage = (value) => `${Number(value || 0).toFixed(1)}%`;
+
   const calculateWait = (booking) => {
     const start = new Date(booking.startTime);
     if (isNaN(start.getTime())) return 0;
@@ -167,54 +231,6 @@ function BarberDashboard() {
 
     return `Updated: ${new Date(booking.updatedAt || booking.createdAt).toLocaleString()}`;
   };
-
-  const servicePriceMap = services.reduce((map, service) => {
-    map[service.name] = Number(service.price || 0);
-    return map;
-  }, {});
-
-  const totalBookings = analyticsBookings.length;
-  const estimatedRevenue = analyticsBookings.reduce((sum, booking) => {
-    const bookingRevenue =
-      typeof booking.totalPrice === "number"
-        ? Number(booking.totalPrice || 0)
-        : (booking.services || []).reduce(
-            (serviceSum, serviceName) => serviceSum + (servicePriceMap[serviceName] || 0),
-            0
-          );
-
-    return sum + bookingRevenue;
-  }, 0);
-
-  const servicePopularity = Object.entries(
-    analyticsBookings.reduce((counts, booking) => {
-      (booking.services || []).forEach((serviceName) => {
-        counts[serviceName] = (counts[serviceName] || 0) + 1;
-      });
-
-      return counts;
-    }, {})
-  )
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-
-  const peakBookingHours = Object.entries(
-    analyticsBookings.reduce((counts, booking) => {
-      const start = booking.startTime ? new Date(booking.startTime) : null;
-
-      if (!start || isNaN(start.getTime())) {
-        return counts;
-      }
-
-      const hour = start.getHours();
-      const label = `${String(hour).padStart(2, "0")}:00`;
-      counts[label] = (counts[label] || 0) + 1;
-      return counts;
-    }, {})
-  )
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-
-  const topServiceCount = servicePopularity[0]?.[1] || 0;
-  const topHourCount = peakBookingHours[0]?.[1] || 0;
   const getProfileForBooking = (booking) =>
     customerProfiles[booking.customerId] ||
     getDefaultProfile({
@@ -222,6 +238,66 @@ function BarberDashboard() {
       customerId: booking.customerId,
       customerName: booking.customerName
     });
+
+  useEffect(() => {
+    if (!barberId) {
+      return;
+    }
+
+    const range = getAnalyticsRange(analyticsPreset);
+
+    if (analyticsPreset === "custom" && !range) {
+      setAnalyticsData(null);
+      setAnalyticsError("");
+      setAnalyticsLoading(false);
+      return;
+    }
+
+    let ignore = false;
+
+    const getAnalyticsOverview = async () => {
+      try {
+        setAnalyticsLoading(true);
+        setAnalyticsError("");
+
+        const params = new URLSearchParams({
+          barberId,
+          rangePreset: analyticsPreset
+        });
+
+        if (range) {
+          params.set("startDate", range.start);
+          params.set("endDate", range.end);
+        }
+
+        const res = await fetch(`${API_URL}/analytics/overview?${params.toString()}`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || "Could not load analytics");
+        }
+
+        if (!ignore) {
+          setAnalyticsData(data);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setAnalyticsData(null);
+          setAnalyticsError(err.message || "Could not load analytics");
+        }
+      } finally {
+        if (!ignore) {
+          setAnalyticsLoading(false);
+        }
+      }
+    };
+
+    getAnalyticsOverview();
+
+    return () => {
+      ignore = true;
+    };
+  }, [analyticsCustomEnd, analyticsCustomStart, analyticsPreset, barberId]);
 
   const startBooking = async (id) => {
     try {
@@ -432,6 +508,15 @@ function BarberDashboard() {
     getBookings();
     getCustomerProfiles();
   };
+
+  const barberMetrics = analyticsData?.barberMetrics;
+  const platformMetrics = analyticsData?.platformMetrics;
+  const servicePopularity = barberMetrics?.servicePopularity || [];
+  const peakBookingHours = barberMetrics?.peakBookingHours || [];
+  const topPerformingShops =
+    analyticsData?.topPerformingShops || platformMetrics?.topPerformingShops || [];
+  const topServiceCount = servicePopularity[0]?.[1] || 0;
+  const topHourCount = peakBookingHours[0]?.[1] || 0;
 
   return (
     <div style={{ padding: "30px", maxWidth: "900px", margin: "0 auto" }}>
@@ -661,81 +746,210 @@ function BarberDashboard() {
         <section>
           <h2>Analytics Dashboard</h2>
 
-          <div className="analytics-grid">
-            <article className="analytics-card">
-              <p className="analytics-card__label">Total Bookings</p>
-              <strong className="analytics-card__value">{totalBookings}</strong>
-              <span className="analytics-card__hint">Active + completed bookings</span>
-            </article>
+          <div className="analytics-filter-bar">
+            <div className="analytics-filter-pills" role="tablist" aria-label="Analytics date filters">
+              {analyticsPresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  className={`dashboard-nav__button ${
+                    analyticsPreset === preset.id ? "dashboard-nav__button--active" : ""
+                  }`}
+                  onClick={() => setAnalyticsPreset(preset.id)}
+                  type="button"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
 
-            <article className="analytics-card">
-              <p className="analytics-card__label">Estimated Revenue</p>
-              <strong className="analytics-card__value">Rs {estimatedRevenue}</strong>
-              <span className="analytics-card__hint">Based on current service prices</span>
-            </article>
+            {analyticsPreset === "custom" && (
+              <div className="analytics-filter-fields">
+                <label className="analytics-filter-field">
+                  <span>Start Date</span>
+                  <input
+                    type="date"
+                    aria-label="Analytics start date"
+                    max={analyticsCustomEnd || getLocalDateValue()}
+                    value={analyticsCustomStart}
+                    onChange={(e) => setAnalyticsCustomStart(e.target.value)}
+                  />
+                </label>
+
+                <label className="analytics-filter-field">
+                  <span>End Date</span>
+                  <input
+                    type="date"
+                    aria-label="Analytics end date"
+                    min={analyticsCustomStart || undefined}
+                    max={getLocalDateValue()}
+                    value={analyticsCustomEnd}
+                    onChange={(e) => setAnalyticsCustomEnd(e.target.value)}
+                  />
+                </label>
+              </div>
+            )}
           </div>
 
-          <div className="analytics-panels">
-            <article className="analytics-panel">
-              <div className="analytics-panel__header">
-                <h3>Most Popular Service</h3>
-                <p>Service demand ranked by completed and active bookings.</p>
+          {analyticsLoading ? (
+            <p>Loading analytics...</p>
+          ) : analyticsError ? (
+            <p>{analyticsError}</p>
+          ) : analyticsPreset === "custom" && !analyticsData ? (
+            <p>Select both dates to load a custom analytics range.</p>
+          ) : (
+            <>
+              <div className="analytics-section-heading">
+                <h3>Barber Performance</h3>
+                <p>Your shop metrics for the selected date range.</p>
               </div>
 
-              {servicePopularity.length === 0 ? (
-                <p>No service data yet.</p>
-              ) : (
-                <div className="analytics-bars">
-                  {servicePopularity.map(([serviceName, count]) => (
-                    <div className="analytics-bar-row" key={serviceName}>
-                      <div className="analytics-bar-row__text">
-                        <span>{serviceName}</span>
-                        <strong>{count} bookings</strong>
-                      </div>
-                      <div className="analytics-bar-track">
-                        <div
-                          className="analytics-bar-fill"
-                          style={{
-                            width: `${Math.max(18, (count / topServiceCount) * 100)}%`
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
+              <div className="analytics-grid">
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Total Bookings</p>
+                  <strong className="analytics-card__value">{barberMetrics?.totalBookings || 0}</strong>
+                  <span className="analytics-card__hint">Active + completed bookings</span>
+                </article>
 
-            <article className="analytics-panel">
-              <div className="analytics-panel__header">
-                <h3>Peak Booking Hours</h3>
-                <p>Most active booking windows from saved start times.</p>
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Estimated Revenue</p>
+                  <strong className="analytics-card__value">
+                    Rs {barberMetrics?.estimatedRevenue || 0}
+                  </strong>
+                  <span className="analytics-card__hint">Based on current service prices</span>
+                </article>
               </div>
 
-              {peakBookingHours.length === 0 ? (
-                <p>No booking hours yet.</p>
-              ) : (
-                <div className="analytics-bars">
-                  {peakBookingHours.map(([hourLabel, count]) => (
-                    <div className="analytics-bar-row" key={hourLabel}>
-                      <div className="analytics-bar-row__text">
-                        <span>{hourLabel}</span>
-                        <strong>{count} bookings</strong>
-                      </div>
-                      <div className="analytics-bar-track">
-                        <div
-                          className="analytics-bar-fill analytics-bar-fill--accent"
-                          style={{
-                            width: `${Math.max(18, (count / topHourCount) * 100)}%`
-                          }}
-                        />
-                      </div>
+              <div className="analytics-panels">
+                <article className="analytics-panel">
+                  <div className="analytics-panel__header">
+                    <h3>Most Popular Service</h3>
+                    <p>Service demand ranked by completed and active bookings.</p>
+                  </div>
+
+                  {servicePopularity.length === 0 ? (
+                    <p>No service data yet.</p>
+                  ) : (
+                    <div className="analytics-bars">
+                      {servicePopularity.map(([serviceName, count]) => (
+                        <div className="analytics-bar-row" key={serviceName}>
+                          <div className="analytics-bar-row__text">
+                            <span>{serviceName}</span>
+                            <strong>{count} bookings</strong>
+                          </div>
+                          <div className="analytics-bar-track">
+                            <div
+                              className="analytics-bar-fill"
+                              style={{
+                                width: `${Math.max(18, (count / topServiceCount) * 100)}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          </div>
+                  )}
+                </article>
+
+                <article className="analytics-panel">
+                  <div className="analytics-panel__header">
+                    <h3>Peak Booking Hours</h3>
+                    <p>Most active booking windows from saved booking activity.</p>
+                  </div>
+
+                  {peakBookingHours.length === 0 ? (
+                    <p>No booking hours yet.</p>
+                  ) : (
+                    <div className="analytics-bars">
+                      {peakBookingHours.map(([hourLabel, count]) => (
+                        <div className="analytics-bar-row" key={hourLabel}>
+                          <div className="analytics-bar-row__text">
+                            <span>{hourLabel}</span>
+                            <strong>{count} bookings</strong>
+                          </div>
+                          <div className="analytics-bar-track">
+                            <div
+                              className="analytics-bar-fill analytics-bar-fill--accent"
+                              style={{
+                                width: `${Math.max(18, (count / topHourCount) * 100)}%`
+                              }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              </div>
+
+              <div className="analytics-section-heading">
+                <h3>Platform Overview</h3>
+                <p>Cross-shop metrics that make the dashboard feel more like a real admin surface.</p>
+              </div>
+
+              <div className="analytics-grid">
+                <article className="analytics-card">
+                  <p className="analytics-card__label">All-Barber Overview</p>
+                  <strong className="analytics-card__value">
+                    {platformMetrics?.allBarberOverview?.totalBarbers || 0}
+                  </strong>
+                  <span className="analytics-card__hint">
+                    {platformMetrics?.allBarberOverview?.openShops || 0} open shops right now
+                  </span>
+                </article>
+
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Total Platform Bookings</p>
+                  <strong className="analytics-card__value">
+                    {platformMetrics?.totalPlatformBookings || 0}
+                  </strong>
+                  <span className="analytics-card__hint">All shops in the selected range</span>
+                </article>
+
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Customer Growth</p>
+                  <strong className="analytics-card__value">
+                    {platformMetrics?.customerGrowth || 0}
+                  </strong>
+                  <span className="analytics-card__hint">New customers in this period</span>
+                </article>
+
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Cancellation Rate</p>
+                  <strong className="analytics-card__value">
+                    {formatPercentage(platformMetrics?.cancellationRate)}
+                  </strong>
+                  <span className="analytics-card__hint">Cancelled bookings across the platform</span>
+                </article>
+              </div>
+
+              <div className="analytics-panels analytics-panels--full">
+                <article className="analytics-panel">
+                  <div className="analytics-panel__header">
+                    <h3>Top Performing Shops</h3>
+                    <p>Shops ranked by booking volume for the active date range.</p>
+                  </div>
+
+                  {topPerformingShops.length === 0 ? (
+                    <p>No shop performance data yet.</p>
+                  ) : (
+                    <div className="analytics-bars">
+                      {topPerformingShops.map((shop, index) => (
+                        <div className="analytics-bar-row" key={shop.barberId || shop.shopName}>
+                          <div className="analytics-bar-row__text">
+                            <span>
+                              {index + 1}. {shop.shopName}
+                            </span>
+                            <strong>{shop.bookings} bookings</strong>
+                          </div>
+                          <div className="analytics-shop-meta">{shop.barberName}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+              </div>
+            </>
+          )}
         </section>
       )}
 
@@ -767,11 +981,20 @@ function BarberDashboard() {
                     </span>
                   </div>
                   <h3>{booking.customerName}</h3>
-                  <p>Services: {booking.services?.join(", ")}</p>
+                  <p>Services: {getBookingServiceNames(booking).join(", ")}</p>
                   <p>Order: {booking.orderId}</p>
                   <p>Chair: {booking.chairName || "Not assigned"}</p>
                   <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
                   <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
+                  <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                  {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
+                    <p>
+                      Snapshot:{" "}
+                      {getBookingServiceItems(booking)
+                        .map((item) => `${item.name} (${formatCurrency(item.price)})`)
+                        .join(", ")}
+                    </p>
+                  )}
                   <p>
                     Favorite Service: {getProfileForBooking(booking).topService || "No repeat data yet"}
                   </p>

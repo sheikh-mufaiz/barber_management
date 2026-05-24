@@ -7,6 +7,11 @@ import {
   formatNotificationToken
 } from "./bookingNotifications";
 import { formatCurrency, getBadgeClassName, getDefaultProfile } from "./loyalty";
+import {
+  getBookingServiceItems,
+  getBookingServiceNames,
+  getBookingTotalPrice
+} from "./bookingSnapshots";
 
 const API_URL = "http://localhost:5000/api";
 
@@ -597,12 +602,21 @@ function Booking() {
                       className="history-card"
                     >
                       <p>
-                        <b>{booking.services.join(", ")}</b>
+                        <b>{getBookingServiceNames(booking).join(", ")}</b>
                       </p>
                       <p>Order: {booking.orderId}</p>
                       <p>Chair: {booking.chairName || "Not assigned"}</p>
                       <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
                       <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
+                      <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                      {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
+                        <p>
+                          Snapshot:{" "}
+                          {getBookingServiceItems(booking)
+                            .map((item) => `${item.name} (${formatCurrency(item.price)})`)
+                            .join(", ")}
+                        </p>
+                      )}
                       <p>{getHistoryLabel(booking)}</p>
                     </div>
                   ))
@@ -690,11 +704,19 @@ function Booking() {
                         customerProfile.recentBookings.map((booking) => (
                           <div key={booking._id} className="history-card">
                             <p>
-                              <b>{(booking.services || []).join(", ")}</b>
+                              <b>{getBookingServiceNames(booking).join(", ")}</b>
                             </p>
                             <p>Order: {booking.orderId}</p>
                             <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
-                            <p>Total: {formatCurrency(booking.totalPrice)}</p>
+                            <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                            {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
+                              <p>
+                                Snapshot:{" "}
+                                {getBookingServiceItems(booking)
+                                  .map((item) => `${item.name} (${formatCurrency(item.price)})`)
+                                  .join(", ")}
+                              </p>
+                            )}
                             <p>{getHistoryLabel(booking)}</p>
                           </div>
                         ))

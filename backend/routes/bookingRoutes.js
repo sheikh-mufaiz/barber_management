@@ -10,6 +10,13 @@ const {
   getCustomerProfile,
   getCustomerProfilesForBarber
 } = require("../utils/customerProfiles");
+const { getAnalyticsOverview } = require("../utils/analytics");
+const {
+  buildBookingServiceSnapshot,
+  getBookingTotalDuration,
+  getBookingTotalPrice,
+  validateBookingServiceSnapshot
+} = require("../utils/bookingSnapshots");
 
 // 🔥 ESTIMATE BOOKING (NO SAVE)
 router.post("/estimate-booking", async (req, res) => {
@@ -65,11 +72,18 @@ router.post("/book", async (req, res) => {
     const normalizedBookingType =
       bookingType === "scheduled" ? "scheduled" : "instant";
     const requestedScheduleTime = scheduledFor ? new Date(scheduledFor) : null;
+    const requestedServices = Array.isArray(services) ? services : [];
 
     // ✅ VALIDATION (FIXED)
-    if (!barberId || !totalTime || (!customerId && !isOffline)) {
+    if (!barberId || (!customerId && !isOffline)) {
       return res.status(400).json({
         message: "Missing required fields"
+      });
+    }
+
+    if (!requestedServices.length) {
+      return res.status(400).json({
+        message: "Select at least one service"
       });
     }
 
@@ -128,23 +142,38 @@ router.post("/book", async (req, res) => {
       map[service.name] = service;
       return map;
     }, {});
-    const serviceItems = (services || []).map((serviceName) => {
-      const matchedService = serviceMap[serviceName];
-
-      return {
-        name: serviceName,
-        duration: Number(matchedService?.duration || 0),
-        price: Number(matchedService?.price || 0)
-      };
+    const snapshotValidation = validateBookingServiceSnapshot({
+      requestedServices,
+      serviceMap
     });
-    const totalPrice = serviceItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+
+    if (snapshotValidation.hasMissingServices) {
+      return res.status(400).json({
+        message: `Unknown services: ${snapshotValidation.missingServices.join(", ")}`
+      });
+    }
+
+    const serviceItems = buildBookingServiceSnapshot({
+      services: requestedServices,
+      serviceMap
+    });
+    const snapshotTotalTime = getBookingTotalDuration({ serviceItems });
+    const normalizedTotalTime = snapshotTotalTime || Number(totalTime || 0);
+
+    if (!normalizedTotalTime) {
+      return res.status(400).json({
+        message: "Total time must be greater than zero"
+      });
+    }
+
+    const totalPrice = getBookingTotalPrice({ serviceItems });
 
     const booking = new Booking({
       barberId,
-      services,
+      services: requestedServices,
       serviceItems,
       totalPrice,
-      totalTime: Number(totalTime),
+      totalTime: normalizedTotalTime,
       bookingType: normalizedBookingType,
       scheduledFor:
         normalizedBookingType === "scheduled" ? requestedScheduleTime : null,
@@ -198,6 +227,30 @@ router.get("/customer-profiles/:barberId", async (req, res) => {
     res.json(profiles);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/analytics/overview", async (req, res) => {
+  try {
+    const { barberId, rangePreset = "today", startDate, endDate } = req.query;
+
+    const overview = await getAnalyticsOverview({
+      barberId,
+      rangePreset,
+      startDate,
+      endDate
+    });
+
+    res.json(overview);
+  } catch (error) {
+    const statusCode =
+      error.message.includes("required") ||
+      error.message.includes("valid") ||
+      error.message.includes("before")
+        ? 400
+        : 500;
+
+    res.status(statusCode).json({ error: error.message });
   }
 });
 

@@ -1,5 +1,9 @@
 const Booking = require("../models/Booking");
-const Service = require("../models/Service");
+const {
+  buildLegacyServicePriceMap,
+  getBookingServiceItems,
+  getBookingTotalPrice
+} = require("./bookingSnapshots");
 
 const getBadgeForVisitCount = (visitCount) => {
   if (visitCount >= 6) {
@@ -13,42 +17,6 @@ const getBadgeForVisitCount = (visitCount) => {
   return "New";
 };
 
-const buildLegacyServicePriceMap = async (barberId) => {
-  const services = await Service.find({ barberId });
-
-  return services.reduce((map, service) => {
-    map[service.name] = Number(service.price || 0);
-    return map;
-  }, {});
-};
-
-const getBookingServiceItems = (booking, legacyPriceMap = {}) => {
-  if (Array.isArray(booking.serviceItems) && booking.serviceItems.length) {
-    return booking.serviceItems.map((item) => ({
-      name: item.name,
-      duration: Number(item.duration || 0),
-      price: Number(item.price || 0)
-    }));
-  }
-
-  return (booking.services || []).map((serviceName) => ({
-    name: serviceName,
-    duration: 0,
-    price: Number(legacyPriceMap[serviceName] || 0)
-  }));
-};
-
-const getBookingTotalPrice = (booking, legacyPriceMap = {}) => {
-  if (typeof booking.totalPrice === "number") {
-    return Number(booking.totalPrice || 0);
-  }
-
-  return getBookingServiceItems(booking, legacyPriceMap).reduce(
-    (sum, item) => sum + Number(item.price || 0),
-    0
-  );
-};
-
 const sortRecentBookings = (a, b) =>
   new Date(b.completedAt || b.cancelledAt || b.updatedAt || b.createdAt) -
   new Date(a.completedAt || a.cancelledAt || a.updatedAt || a.createdAt);
@@ -59,12 +27,12 @@ const createProfileSummary = ({
   barberId,
   completedBookings = [],
   recentBookings = [],
-  legacyPriceMap = {}
+  legacyServiceMap = {}
 }) => {
   const serviceCounts = {};
 
   completedBookings.forEach((booking) => {
-    getBookingServiceItems(booking, legacyPriceMap).forEach((item) => {
+    getBookingServiceItems(booking, legacyServiceMap).forEach((item) => {
       if (!item.name) {
         return;
       }
@@ -78,7 +46,7 @@ const createProfileSummary = ({
     .map(([name, count]) => ({ name, count }));
   const visitCount = completedBookings.length;
   const totalSpend = completedBookings.reduce(
-    (sum, booking) => sum + getBookingTotalPrice(booking, legacyPriceMap),
+    (sum, booking) => sum + getBookingTotalPrice(booking, legacyServiceMap),
     0
   );
 
@@ -98,8 +66,9 @@ const createProfileSummary = ({
       .map((booking) => ({
         _id: booking._id,
         orderId: booking.orderId,
-        services: booking.services || getBookingServiceItems(booking, legacyPriceMap).map((item) => item.name),
-        totalPrice: getBookingTotalPrice(booking, legacyPriceMap),
+        services: getBookingServiceItems(booking, legacyServiceMap).map((item) => item.name),
+        serviceItems: getBookingServiceItems(booking, legacyServiceMap),
+        totalPrice: getBookingTotalPrice(booking, legacyServiceMap),
         status: booking.status,
         chairName: booking.chairName,
         completedAt: booking.completedAt,
@@ -116,7 +85,7 @@ const getCustomerProfile = async ({ barberId, customerId }) => {
     customerId,
     status: { $in: ["completed", "cancelled"] }
   }).sort({ createdAt: -1 });
-  const legacyPriceMap = await buildLegacyServicePriceMap(barberId);
+  const legacyServiceMap = await buildLegacyServicePriceMap(barberId);
   const completedBookings = bookings.filter((booking) => booking.status === "completed");
 
   return createProfileSummary({
@@ -125,7 +94,7 @@ const getCustomerProfile = async ({ barberId, customerId }) => {
     barberId,
     completedBookings,
     recentBookings: bookings,
-    legacyPriceMap
+    legacyServiceMap
   });
 };
 
@@ -134,7 +103,7 @@ const getCustomerProfilesForBarber = async ({ barberId }) => {
     barberId,
     status: { $in: ["completed", "cancelled"] }
   }).sort({ createdAt: -1 });
-  const legacyPriceMap = await buildLegacyServicePriceMap(barberId);
+  const legacyServiceMap = await buildLegacyServicePriceMap(barberId);
   const grouped = new Map();
 
   bookings.forEach((booking) => {
@@ -155,7 +124,7 @@ const getCustomerProfilesForBarber = async ({ barberId }) => {
         barberId,
         completedBookings: customerBookings.filter((booking) => booking.status === "completed"),
         recentBookings: customerBookings,
-        legacyPriceMap
+        legacyServiceMap
       })
     )
     .sort((a, b) => b.visitCount - a.visitCount || b.totalSpend - a.totalSpend);
