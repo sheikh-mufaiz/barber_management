@@ -7,6 +7,14 @@ const bookingSchema = new mongoose.Schema(
     customerName: String,
     orderId: String,
     services: [String],
+    serviceItems: [
+      {
+        name: String,
+        duration: Number,
+        price: Number
+      }
+    ],
+    totalPrice: Number,
     totalTime: Number,
     bookingType: {
       type: String,
@@ -22,8 +30,12 @@ const bookingSchema = new mongoose.Schema(
     actualStartTime: Date,
     status: {
       type: String,
+      enum: ["booked", "in-progress", "completed", "cancelled"],
       default: "booked"
-    }
+    },
+    completedAt: Date,
+    cancelledAt: Date,
+    cancelledBy: String
   },
   { timestamps: true }
 );

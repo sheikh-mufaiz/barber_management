@@ -166,6 +166,36 @@ test("recalculates downstream start times when an in-progress service started la
   assert.equal(waitingBooking.endTime.toISOString(), "2026-05-23T10:35:00.000Z");
 });
 
+test("ignores completed and cancelled bookings when arranging the active queue", () => {
+  const bookings = [
+    makeBooking({
+      _id: "completed",
+      status: "completed",
+      startTime: new Date("2026-05-23T10:00:00.000Z"),
+      endTime: new Date("2026-05-23T10:20:00.000Z"),
+      completedAt: new Date("2026-05-23T10:20:00.000Z")
+    }),
+    makeBooking({
+      _id: "cancelled",
+      status: "cancelled",
+      startTime: new Date("2026-05-23T10:20:00.000Z"),
+      endTime: new Date("2026-05-23T10:35:00.000Z"),
+      cancelledAt: new Date("2026-05-23T10:10:00.000Z")
+    }),
+    makeBooking({
+      _id: "active",
+      startTime: new Date("2026-05-23T10:00:00.000Z"),
+      endTime: new Date("2026-05-23T10:15:00.000Z"),
+      createdAt: new Date("2026-05-23T09:56:00.000Z")
+    })
+  ];
+
+  const arranged = arrangeBookings(bookings, oneChair, now);
+
+  assert.equal(arranged.length, 1);
+  assert.equal(arranged[0]._id, "active");
+});
+
 test("rejects a requested chair that is occupied even when another chair is free", () => {
   const bookings = [
     makeBooking({

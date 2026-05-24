@@ -171,6 +171,276 @@
   font-size: 1rem;
 }
 
+.history-card {
+  border: 1px solid #d8e1ea;
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 12px;
+  background: #f8fbfd;
+}
+
+.history-card p,
+.history-card h3 {
+  margin: 0 0 8px;
+}
+
+.dashboard-nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 24px;
+}
+
+.dashboard-nav__button {
+  border: 1px solid #c9d5e2;
+  background: #f3f7fb;
+  color: #36506b;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dashboard-nav__button--active {
+  background: #132238;
+  color: #fff;
+  border-color: #132238;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.analytics-card,
+.analytics-panel {
+  border: 1px solid #d8e1ea;
+  border-radius: 18px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+  box-shadow: 0 12px 30px rgba(19, 34, 56, 0.08);
+}
+
+.analytics-card__label {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #59708a;
+  font-weight: 700;
+}
+
+.analytics-card__value {
+  display: block;
+  font-size: 2rem;
+  color: #132238;
+  margin-bottom: 8px;
+}
+
+.analytics-card__hint {
+  color: #59708a;
+  font-size: 0.92rem;
+}
+
+.analytics-panels {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.analytics-panel__header h3 {
+  margin: 0 0 6px;
+  color: #132238;
+}
+
+.analytics-panel__header p {
+  margin: 0 0 16px;
+  color: #59708a;
+}
+
+.analytics-bars {
+  display: grid;
+  gap: 14px;
+}
+
+.analytics-bar-row {
+  display: grid;
+  gap: 8px;
+}
+
+.analytics-bar-row__text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #132238;
+}
+
+.analytics-bar-row__text strong {
+  color: #36506b;
+  font-size: 0.92rem;
+}
+
+.analytics-bar-track {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: #e6edf4;
+  overflow: hidden;
+}
+
+.analytics-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #132238 0%, #294569 100%);
+}
+
+.analytics-bar-fill--accent {
+  background: linear-gradient(90deg, #0f766e 0%, #2dd4bf 100%);
+}
+
+.loyalty-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.loyalty-card {
+  border: 1px solid #d8e1ea;
+  border-radius: 18px;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fafc 100%);
+  box-shadow: 0 12px 30px rgba(19, 34, 56, 0.08);
+}
+
+.loyalty-card__label {
+  margin: 0 0 10px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #59708a;
+  font-weight: 700;
+}
+
+.loyalty-card__value {
+  display: block;
+  font-size: 1.4rem;
+  color: #132238;
+}
+
+.loyalty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.loyalty-badge--new {
+  background: #e7eef6;
+  color: #36506b;
+}
+
+.loyalty-badge--regular {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.loyalty-badge--vip {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.loyalty-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.loyalty-summary__meta {
+  color: #36506b;
+  font-size: 0.92rem;
+}
+
+.toast-stack {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-radius: 16px;
+  padding: 14px 16px;
+  color: #132238;
+  background: #fff;
+  border: 1px solid #d8e1ea;
+  box-shadow: 0 18px 40px rgba(19, 34, 56, 0.16);
+}
+
+.toast--success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.toast--info {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.toast--warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.toast--update {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+}
+
+.toast__content {
+  display: grid;
+  gap: 4px;
+}
+
+.toast__title,
+.toast__message {
+  margin: 0;
+}
+
+.toast__title {
+  font-weight: 700;
+}
+
+.toast__message {
+  color: #36506b;
+  line-height: 1.4;
+}
+
+.toast__close {
+  border: 0;
+  background: transparent;
+  color: #59708a;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+}
+
 @media (max-width: 640px) {
   .queue-card {
     padding: 16px;
@@ -185,5 +455,27 @@
 
   .queue-wait-pill {
     align-self: flex-start;
+  }
+
+  .dashboard-nav {
+    gap: 8px;
+  }
+
+  .analytics-bar-row__text {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .loyalty-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .toast-stack {
+    top: 14px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: min(92vw, 360px);
   }
 }

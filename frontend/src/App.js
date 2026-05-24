@@ -4,6 +4,7 @@ import Login from "./Login";
 import Register from "./Register";
 import Booking from "./Booking";
 import BarberDashboard from "./BarberDashboard";
+import { NotificationProvider } from "./NotificationContext";
 
 function App() {
   const [user, setUser] = useState(null);
@@ -30,22 +31,24 @@ function App() {
   }
 
   return (
-    <div>
-      <h2>Welcome {user.name}</h2>
+    <NotificationProvider>
+      <div>
+        <h2>Welcome {user.name}</h2>
 
-      <button onClick={() => {
-        localStorage.removeItem("user");
-        setUser(null);
-      }}>
-        Logout
-      </button>
+        <button onClick={() => {
+          localStorage.removeItem("user");
+          setUser(null);
+        }}>
+          Logout
+        </button>
 
-      {user.role === "barber" ? (
-        <BarberDashboard />
-      ) : (
-        <Booking />
-      )}
-    </div>
+        {user.role === "barber" ? (
+          <BarberDashboard />
+        ) : (
+          <Booking />
+        )}
+      </div>
+    </NotificationProvider>
   );
 }
 export default App;

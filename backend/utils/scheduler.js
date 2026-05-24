@@ -153,6 +153,8 @@ const chooseRequestedChairForBooking = (
   };
 };
 
+const isQueueActiveStatus = (status) => status === "booked" || status === "in-progress";
+
 const cloneBookings = (bookings = []) =>
   bookings.map((booking) => ({
     ...booking,
@@ -254,8 +256,9 @@ const arrangeBookings = (bookings, chairsInput, now = new Date()) => {
   const nowMs = now.getTime();
   const reservations = new Map();
   const arranged = [];
+  const activeBookings = bookings.filter((booking) => isQueueActiveStatus(booking.status));
 
-  const inProgress = bookings
+  const inProgress = activeBookings
     .filter((booking) => booking.status === "in-progress")
     .sort((a, b) => getDateValue(a.actualStartTime) - getDateValue(b.actualStartTime));
 
@@ -277,7 +280,7 @@ const arrangeBookings = (bookings, chairsInput, now = new Date()) => {
   }
 
   if (!activeChairs.length) {
-    const pendingWithoutCapacity = bookings.filter(
+    const pendingWithoutCapacity = activeBookings.filter(
       (booking) => booking.status !== "in-progress"
     );
 
@@ -286,7 +289,7 @@ const arrangeBookings = (bookings, chairsInput, now = new Date()) => {
     );
   }
 
-  const pending = bookings.filter((booking) => booking.status !== "in-progress");
+  const pending = activeBookings.filter((booking) => booking.status !== "in-progress");
   const scheduled = pending
     .filter((booking) => booking.bookingType === "scheduled")
     .sort(sortByScheduled);

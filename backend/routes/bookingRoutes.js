@@ -6,6 +6,10 @@ const {
   estimateBookingForBarber,
   recalculateQueueForBarber
 } = require("../utils/scheduler");
+const {
+  getCustomerProfile,
+  getCustomerProfilesForBarber
+} = require("../utils/customerProfiles");
 
 // 🔥 ESTIMATE BOOKING (NO SAVE)
 router.post("/estimate-booking", async (req, res) => {
@@ -92,7 +96,7 @@ router.post("/book", async (req, res) => {
       const existingBooking = await Booking.findOne({
         barberId,
         customerId,
-        endTime: { $gt: new Date() } // Active booking (not ended)
+        status: { $in: ["booked", "in-progress"] }
       });
       if (existingBooking) {
         return res.status(400).json({
@@ -116,9 +120,30 @@ router.post("/book", async (req, res) => {
       });
     }
 
+    const selectedServices = await Service.find({
+      barberId,
+      name: { $in: services || [] }
+    });
+    const serviceMap = selectedServices.reduce((map, service) => {
+      map[service.name] = service;
+      return map;
+    }, {});
+    const serviceItems = (services || []).map((serviceName) => {
+      const matchedService = serviceMap[serviceName];
+
+      return {
+        name: serviceName,
+        duration: Number(matchedService?.duration || 0),
+        price: Number(matchedService?.price || 0)
+      };
+    });
+    const totalPrice = serviceItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+
     const booking = new Booking({
       barberId,
       services,
+      serviceItems,
+      totalPrice,
       totalTime: Number(totalTime),
       bookingType: normalizedBookingType,
       scheduledFor:
@@ -146,6 +171,31 @@ router.post("/book", async (req, res) => {
       booking: updatedBooking
     });
 
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/customer-profile/:barberId/:customerId", async (req, res) => {
+  try {
+    const profile = await getCustomerProfile({
+      barberId: req.params.barberId,
+      customerId: req.params.customerId
+    });
+
+    res.json(profile);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get("/customer-profiles/:barberId", async (req, res) => {
+  try {
+    const profiles = await getCustomerProfilesForBarber({
+      barberId: req.params.barberId
+    });
+
+    res.json(profiles);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -198,9 +248,12 @@ router.delete("/cancel/:id", async (req, res) => {
       });
     }
 
-    const deletedBooking = await Booking.findByIdAndDelete(bookingId);
+    booking.status = "cancelled";
+    booking.cancelledAt = new Date();
+    booking.cancelledBy = role || "unknown";
+    await booking.save();
 
-    await recalculateQueueForBarber(deletedBooking.barberId);
+    await recalculateQueueForBarber(booking.barberId);
 
     res.json({
       message: "Booking cancelled & slots shifted 🔥"
@@ -233,9 +286,11 @@ router.put("/complete/:id", async (req, res) => {
       });
     }
 
-    const completed = await Booking.findByIdAndDelete(bookingId);
+    booking.status = "completed";
+    booking.completedAt = new Date();
+    await booking.save();
 
-    await recalculateQueueForBarber(completed.barberId);
+    await recalculateQueueForBarber(booking.barberId);
 
     res.json({
       message: "Booking completed & queue updated ✅"
