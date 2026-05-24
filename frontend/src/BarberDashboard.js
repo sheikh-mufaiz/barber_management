@@ -203,6 +203,7 @@ function BarberDashboard() {
   };
 
   const formatPercentage = (value) => `${Number(value || 0).toFixed(1)}%`;
+  const formatMinutes = (value) => `${Math.round(Number(value || 0))} min`;
 
   const calculateWait = (booking) => {
     const start = new Date(booking.startTime);
@@ -510,6 +511,7 @@ function BarberDashboard() {
   };
 
   const barberMetrics = analyticsData?.barberMetrics;
+  const chairMetrics = analyticsData?.chairMetrics;
   const platformMetrics = analyticsData?.platformMetrics;
   const servicePopularity = barberMetrics?.servicePopularity || [];
   const peakBookingHours = barberMetrics?.peakBookingHours || [];
@@ -517,6 +519,52 @@ function BarberDashboard() {
     analyticsData?.topPerformingShops || platformMetrics?.topPerformingShops || [];
   const topServiceCount = servicePopularity[0]?.[1] || 0;
   const topHourCount = peakBookingHours[0]?.[1] || 0;
+  const chairPerformanceRows = chairMetrics?.perChair || [];
+  const renderSharedAnalyticsFilters = () => (
+    <div className="analytics-filter-bar">
+      <div className="analytics-filter-pills" role="tablist" aria-label="Analytics date filters">
+        {analyticsPresets.map((preset) => (
+          <button
+            key={preset.id}
+            className={`dashboard-nav__button ${
+              analyticsPreset === preset.id ? "dashboard-nav__button--active" : ""
+            }`}
+            onClick={() => setAnalyticsPreset(preset.id)}
+            type="button"
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+
+      {analyticsPreset === "custom" && (
+        <div className="analytics-filter-fields">
+          <label className="analytics-filter-field">
+            <span>Start Date</span>
+            <input
+              type="date"
+              aria-label="Analytics start date"
+              max={analyticsCustomEnd || getLocalDateValue()}
+              value={analyticsCustomStart}
+              onChange={(e) => setAnalyticsCustomStart(e.target.value)}
+            />
+          </label>
+
+          <label className="analytics-filter-field">
+            <span>End Date</span>
+            <input
+              type="date"
+              aria-label="Analytics end date"
+              min={analyticsCustomStart || undefined}
+              max={getLocalDateValue()}
+              value={analyticsCustomEnd}
+              onChange={(e) => setAnalyticsCustomEnd(e.target.value)}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div style={{ padding: "30px", maxWidth: "900px", margin: "0 auto" }}>
@@ -597,6 +645,73 @@ function BarberDashboard() {
               <button onClick={saveChairs}>Save Chairs</button>
             </div>
           </div>
+
+          <div className="analytics-section-heading">
+            <h3>Chair Performance</h3>
+            <p>Operational chair metrics using the same date range as your analytics dashboard.</p>
+          </div>
+
+          {renderSharedAnalyticsFilters()}
+
+          {analyticsLoading ? (
+            <p>Loading chair performance...</p>
+          ) : analyticsError ? (
+            <p>{analyticsError}</p>
+          ) : analyticsPreset === "custom" && !analyticsData ? (
+            <p>Select both dates to load a custom analytics range.</p>
+          ) : (
+            <>
+              <div className="analytics-grid">
+                <article className="analytics-card">
+                  <p className="analytics-card__label">Busiest Chair</p>
+                  <strong className="analytics-card__value">
+                    {chairMetrics?.summary?.busiestChairName || "No chair activity"}
+                  </strong>
+                  <span className="analytics-card__hint">
+                    {chairMetrics?.summary?.busiestChairBookings || 0} bookings in this range
+                  </span>
+                </article>
+              </div>
+
+              {chairPerformanceRows.length === 0 ? (
+                <p>No chair activity in this range.</p>
+              ) : (
+                <>
+                  {chairPerformanceRows.every((chair) => chair.bookingCount === 0) && (
+                    <p>No chair activity in this range.</p>
+                  )}
+
+                  <div className="analytics-panels analytics-panels--full">
+                    <article className="analytics-panel">
+                      <div className="analytics-panel__header">
+                        <h3>Per-Chair Performance</h3>
+                        <p>Bookings, service time, utilization, and idle time by chair.</p>
+                      </div>
+
+                      <div className="analytics-bars">
+                        {chairPerformanceRows.map((chair) => (
+                          <div className="analytics-chair-card" key={chair.chairId}>
+                            <div className="analytics-bar-row__text">
+                              <span>
+                                {chair.chairName}
+                                {!chair.isActive ? " (Inactive)" : ""}
+                              </span>
+                              <strong>{chair.bookingCount} bookings</strong>
+                            </div>
+                            <div className="analytics-chair-stats">
+                              <span>Avg Service: {formatMinutes(chair.averageServiceMinutes)}</span>
+                              <span>Utilization: {formatPercentage(chair.utilizationRate)}</span>
+                              <span>Idle Time: {formatMinutes(chair.idleMinutes)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
+                  </div>
+                </>
+              )}
+            </>
+          )}
         </section>
       )}
 
@@ -746,49 +861,7 @@ function BarberDashboard() {
         <section>
           <h2>Analytics Dashboard</h2>
 
-          <div className="analytics-filter-bar">
-            <div className="analytics-filter-pills" role="tablist" aria-label="Analytics date filters">
-              {analyticsPresets.map((preset) => (
-                <button
-                  key={preset.id}
-                  className={`dashboard-nav__button ${
-                    analyticsPreset === preset.id ? "dashboard-nav__button--active" : ""
-                  }`}
-                  onClick={() => setAnalyticsPreset(preset.id)}
-                  type="button"
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-
-            {analyticsPreset === "custom" && (
-              <div className="analytics-filter-fields">
-                <label className="analytics-filter-field">
-                  <span>Start Date</span>
-                  <input
-                    type="date"
-                    aria-label="Analytics start date"
-                    max={analyticsCustomEnd || getLocalDateValue()}
-                    value={analyticsCustomStart}
-                    onChange={(e) => setAnalyticsCustomStart(e.target.value)}
-                  />
-                </label>
-
-                <label className="analytics-filter-field">
-                  <span>End Date</span>
-                  <input
-                    type="date"
-                    aria-label="Analytics end date"
-                    min={analyticsCustomStart || undefined}
-                    max={getLocalDateValue()}
-                    value={analyticsCustomEnd}
-                    onChange={(e) => setAnalyticsCustomEnd(e.target.value)}
-                  />
-                </label>
-              </div>
-            )}
-          </div>
+          {renderSharedAnalyticsFilters()}
 
           {analyticsLoading ? (
             <p>Loading analytics...</p>

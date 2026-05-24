@@ -4,6 +4,7 @@ const {
   buildLegacyServicePriceMap,
   getBookingTotalPrice
 } = require("./bookingSnapshots");
+const { sanitizeChairs } = require("./chairs");
 
 const PRESET_VALUES = new Set(["today", "week", "month", "custom"]);
 
@@ -110,6 +111,59 @@ const buildPeakBookingHours = (bookings) =>
       return counts;
     }, {})
   ).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+const getRangeDurationMinutes = (range) =>
+  Math.max(1, Math.round((range.end.getTime() - range.start.getTime() + 1) / 60000));
+
+const buildChairMetrics = ({ chairs = [], bookings = [], range }) => {
+  const normalizedChairs = sanitizeChairs(chairs);
+  const rangeMinutes = getRangeDurationMinutes(range);
+  const nonCancelledBookings = bookings.filter(
+    (booking) => booking.status !== "cancelled" && booking.chairId
+  );
+  const metricsByChair = normalizedChairs.map((chair) => {
+    const chairBookings = nonCancelledBookings.filter((booking) => String(booking.chairId) === String(chair.id));
+    const totalServiceMinutes = chairBookings.reduce(
+      (sum, booking) => sum + Math.max(0, Number(booking.totalTime || 0)),
+      0
+    );
+    const bookingCount = chairBookings.length;
+    const averageServiceMinutes = bookingCount
+      ? Number((totalServiceMinutes / bookingCount).toFixed(1))
+      : 0;
+    const utilizationRate = Number(((totalServiceMinutes / rangeMinutes) * 100).toFixed(1));
+    const idleMinutes = Math.max(0, rangeMinutes - totalServiceMinutes);
+
+    return {
+      chairId: chair.id,
+      chairName: chair.name,
+      isActive: chair.isActive !== false,
+      bookingCount,
+      totalServiceMinutes,
+      averageServiceMinutes,
+      utilizationRate,
+      idleMinutes
+    };
+  });
+
+  const busiestChair = metricsByChair
+    .slice()
+    .sort(
+      (a, b) =>
+        b.bookingCount - a.bookingCount ||
+        b.totalServiceMinutes - a.totalServiceMinutes ||
+        a.chairName.localeCompare(b.chairName)
+    )[0] || null;
+
+  return {
+    summary: {
+      busiestChairId: busiestChair?.chairId || null,
+      busiestChairName: busiestChair?.chairName || "No chair activity",
+      busiestChairBookings: busiestChair?.bookingCount || 0
+    },
+    perChair: metricsByChair
+  };
+};
 
 const buildBarberMetrics = async ({ barberId, bookings }) => {
   const legacyServiceMap = await buildLegacyServicePriceMap(barberId);
@@ -228,6 +282,11 @@ const getAnalyticsOverview = async ({
     barbersById,
     range
   });
+  const chairMetrics = buildChairMetrics({
+    chairs: barbersById[String(barberId)]?.chairs || [],
+    bookings: barberBookings,
+    range
+  });
 
   return {
     range: {
@@ -239,6 +298,7 @@ const getAnalyticsOverview = async ({
       barberId,
       bookings: barberBookings
     }),
+    chairMetrics,
     platformMetrics,
     topPerformingShops: platformMetrics.topPerformingShops
   };
@@ -246,6 +306,7 @@ const getAnalyticsOverview = async ({
 
 module.exports = {
   buildBarberMetrics,
+  buildChairMetrics,
   buildCustomerGrowth,
   buildPeakBookingHours,
   buildPlatformMetrics,
@@ -253,6 +314,7 @@ module.exports = {
   filterBookingsByRange,
   getAnalyticsOverview,
   getBookingEventDate,
+  getRangeDurationMinutes,
   getRangeForPreset,
   getBookingRevenue: getBookingTotalPrice
 };

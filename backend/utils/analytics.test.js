@@ -5,9 +5,11 @@ const Booking = require("../models/Booking");
 const Service = require("../models/Service");
 const User = require("../models/User");
 const {
+  buildChairMetrics,
   buildCustomerGrowth,
   filterBookingsByRange,
   getAnalyticsOverview,
+  getRangeDurationMinutes,
   getRangeForPreset
 } = require("./analytics");
 
@@ -118,6 +120,80 @@ test("counts only first-time customers for growth", () => {
   assert.equal(growth, 1);
 });
 
+test("builds chair metrics with deterministic busiest-chair ranking", () => {
+  const range = {
+    start: new Date("2026-05-24T00:00:00.000Z"),
+    end: new Date("2026-05-24T23:59:59.999Z")
+  };
+
+  const metrics = buildChairMetrics({
+    chairs: [
+      { id: "chair-1", name: "Chair 1", isActive: true },
+      { id: "chair-2", name: "Chair 2", isActive: false },
+      { id: "chair-3", name: "Chair 3", isActive: true }
+    ],
+    bookings: [
+      makeBooking({
+        _id: "chair-1-booking-a",
+        chairId: "chair-1",
+        chairName: "Chair 1",
+        totalTime: 30,
+        status: "completed"
+      }),
+      makeBooking({
+        _id: "chair-1-booking-b",
+        chairId: "chair-1",
+        chairName: "Chair 1",
+        totalTime: 15,
+        status: "booked"
+      }),
+      makeBooking({
+        _id: "chair-2-booking-a",
+        chairId: "chair-2",
+        chairName: "Chair 2",
+        totalTime: 20,
+        status: "completed"
+      }),
+      makeBooking({
+        _id: "chair-2-cancelled",
+        chairId: "chair-2",
+        chairName: "Chair 2",
+        totalTime: 50,
+        status: "cancelled",
+        cancelledAt: new Date("2026-05-24T10:00:00.000Z")
+      })
+    ],
+    range
+  });
+
+  assert.equal(getRangeDurationMinutes(range), 1440);
+  assert.equal(metrics.summary.busiestChairId, "chair-1");
+  assert.equal(metrics.summary.busiestChairName, "Chair 1");
+  assert.equal(metrics.summary.busiestChairBookings, 2);
+  assert.deepEqual(metrics.perChair[0], {
+    chairId: "chair-1",
+    chairName: "Chair 1",
+    isActive: true,
+    bookingCount: 2,
+    totalServiceMinutes: 45,
+    averageServiceMinutes: 22.5,
+    utilizationRate: 3.1,
+    idleMinutes: 1395
+  });
+  assert.deepEqual(metrics.perChair[1], {
+    chairId: "chair-2",
+    chairName: "Chair 2",
+    isActive: false,
+    bookingCount: 1,
+    totalServiceMinutes: 20,
+    averageServiceMinutes: 20,
+    utilizationRate: 1.4,
+    idleMinutes: 1420
+  });
+  assert.equal(metrics.perChair[2].bookingCount, 0);
+  assert.equal(metrics.perChair[2].idleMinutes, 1440);
+});
+
 test("builds analytics overview with barber and platform metrics", async () => {
   const bookingFind = Booking.find;
   const serviceFind = Service.find;
@@ -132,6 +208,9 @@ test("builds analytics overview with barber and platform metrics", async () => {
         customerName: "Aman",
         services: ["Haircut"],
         totalPrice: 100,
+        chairId: "chair-1",
+        chairName: "Chair 1",
+        totalTime: 30,
         status: "completed",
         completedAt: new Date("2026-05-24T09:30:00.000Z")
       }),
@@ -142,6 +221,9 @@ test("builds analytics overview with barber and platform metrics", async () => {
         customerName: "Riya",
         services: ["Wax"],
         totalPrice: 50,
+        chairId: "chair-2",
+        chairName: "Chair 2",
+        totalTime: 20,
         status: "cancelled",
         cancelledAt: new Date("2026-05-24T10:00:00.000Z"),
         completedAt: undefined
@@ -153,6 +235,9 @@ test("builds analytics overview with barber and platform metrics", async () => {
         customerName: "Kabir",
         services: ["Beard"],
         totalPrice: 80,
+        chairId: "chair-9",
+        chairName: "Chair 9",
+        totalTime: 25,
         status: "booked",
         startTime: new Date("2026-05-24T11:00:00.000Z"),
         completedAt: undefined
@@ -164,6 +249,9 @@ test("builds analytics overview with barber and platform metrics", async () => {
         customerName: "Riya",
         services: ["Wax"],
         totalPrice: 50,
+        chairId: "chair-8",
+        chairName: "Chair 8",
+        totalTime: 10,
         status: "completed",
         completedAt: new Date("2026-05-10T10:00:00.000Z")
       })
@@ -177,8 +265,17 @@ test("builds analytics overview with barber and platform metrics", async () => {
         ]
       : [{ name: "Beard", price: 80 }];
   User.find = async () => [
-    { _id: "barber-1", name: "Barber One", shopName: "Style Studio", isOpen: true },
-    { _id: "barber-2", name: "Barber Two", shopName: "Fade House", isOpen: false }
+    {
+      _id: "barber-1",
+      name: "Barber One",
+      shopName: "Style Studio",
+      isOpen: true,
+      chairs: [
+        { id: "chair-1", name: "Chair 1", isActive: true },
+        { id: "chair-2", name: "Chair 2", isActive: false }
+      ]
+    },
+    { _id: "barber-2", name: "Barber Two", shopName: "Fade House", isOpen: false, chairs: [] }
   ];
 
   try {
@@ -195,6 +292,9 @@ test("builds analytics overview with barber and platform metrics", async () => {
     assert.equal(overview.platformMetrics.cancellationRate, 33.3);
     assert.equal(overview.platformMetrics.allBarberOverview.totalBarbers, 2);
     assert.equal(overview.platformMetrics.allBarberOverview.openShops, 1);
+    assert.equal(overview.chairMetrics.summary.busiestChairId, "chair-1");
+    assert.equal(overview.chairMetrics.perChair[0].utilizationRate, 2.1);
+    assert.equal(overview.chairMetrics.perChair[1].bookingCount, 0);
     assert.equal(overview.topPerformingShops[0].shopName, "Style Studio");
     assert.equal(overview.topPerformingShops[0].bookings, 2);
   } finally {
@@ -213,7 +313,15 @@ test("handles zero-booking ranges without division issues", async () => {
     sort: async () => []
   });
   Service.find = async () => [];
-  User.find = async () => [{ _id: "barber-1", name: "Barber One", shopName: "Style Studio", isOpen: true }];
+  User.find = async () => [
+    {
+      _id: "barber-1",
+      name: "Barber One",
+      shopName: "Style Studio",
+      isOpen: true,
+      chairs: [{ id: "chair-1", name: "Chair 1", isActive: true }]
+    }
+  ];
 
   try {
     const overview = await getAnalyticsOverview({
@@ -224,6 +332,8 @@ test("handles zero-booking ranges without division issues", async () => {
 
     assert.equal(overview.platformMetrics.totalPlatformBookings, 0);
     assert.equal(overview.platformMetrics.cancellationRate, 0);
+    assert.equal(overview.chairMetrics.summary.busiestChairBookings, 0);
+    assert.equal(overview.chairMetrics.perChair[0].idleMinutes, 1440);
     assert.deepEqual(overview.topPerformingShops, []);
   } finally {
     Booking.find = bookingFind;

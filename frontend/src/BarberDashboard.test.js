@@ -22,7 +22,8 @@ const buildAnalyticsResponse = ({
   cancellationRate,
   totalBarbers,
   openShops,
-  topPerformingShops
+  topPerformingShops,
+  chairMetrics
 }) => ({
   range: {
     preset: "today",
@@ -35,6 +36,7 @@ const buildAnalyticsResponse = ({
     servicePopularity,
     peakBookingHours
   },
+  chairMetrics,
   platformMetrics: {
     allBarberOverview: {
       totalBarbers,
@@ -59,6 +61,25 @@ const analyticsByPreset = {
     cancellationRate: 33.3,
     totalBarbers: 2,
     openShops: 1,
+    chairMetrics: {
+      summary: {
+        busiestChairId: "chair-1",
+        busiestChairName: "Chair 1",
+        busiestChairBookings: 2
+      },
+      perChair: [
+        {
+          chairId: "chair-1",
+          chairName: "Chair 1",
+          isActive: true,
+          bookingCount: 2,
+          totalServiceMinutes: 45,
+          averageServiceMinutes: 22.5,
+          utilizationRate: 3.1,
+          idleMinutes: 1395
+        }
+      ]
+    },
     topPerformingShops: [
       { barberId: "barber-1", shopName: "Style Studio", barberName: "Barber One", bookings: 2 },
       { barberId: "barber-2", shopName: "Fade House", barberName: "Barber Two", bookings: 1 }
@@ -74,6 +95,25 @@ const analyticsByPreset = {
     cancellationRate: 12.5,
     totalBarbers: 3,
     openShops: 2,
+    chairMetrics: {
+      summary: {
+        busiestChairId: "chair-1",
+        busiestChairName: "Chair 1",
+        busiestChairBookings: 4
+      },
+      perChair: [
+        {
+          chairId: "chair-1",
+          chairName: "Chair 1",
+          isActive: true,
+          bookingCount: 4,
+          totalServiceMinutes: 90,
+          averageServiceMinutes: 22.5,
+          utilizationRate: 0.9,
+          idleMinutes: 9990
+        }
+      ]
+    },
     topPerformingShops: [
       { barberId: "barber-1", shopName: "Style Studio", barberName: "Barber One", bookings: 4 }
     ]
@@ -88,6 +128,35 @@ const analyticsByPreset = {
     cancellationRate: 20,
     totalBarbers: 4,
     openShops: 3,
+    chairMetrics: {
+      summary: {
+        busiestChairId: "chair-2",
+        busiestChairName: "Chair 2",
+        busiestChairBookings: 6
+      },
+      perChair: [
+        {
+          chairId: "chair-1",
+          chairName: "Chair 1",
+          isActive: true,
+          bookingCount: 3,
+          totalServiceMinutes: 60,
+          averageServiceMinutes: 20,
+          utilizationRate: 0.1,
+          idleMinutes: 44580
+        },
+        {
+          chairId: "chair-2",
+          chairName: "Chair 2",
+          isActive: false,
+          bookingCount: 6,
+          totalServiceMinutes: 180,
+          averageServiceMinutes: 30,
+          utilizationRate: 0.4,
+          idleMinutes: 44460
+        }
+      ]
+    },
     topPerformingShops: [
       { barberId: "barber-3", shopName: "Clip Joint", barberName: "Barber Three", bookings: 7 }
     ]
@@ -102,6 +171,25 @@ const analyticsByPreset = {
     cancellationRate: 0,
     totalBarbers: 2,
     openShops: 1,
+    chairMetrics: {
+      summary: {
+        busiestChairId: null,
+        busiestChairName: "No chair activity",
+        busiestChairBookings: 0
+      },
+      perChair: [
+        {
+          chairId: "chair-1",
+          chairName: "Chair 1",
+          isActive: true,
+          bookingCount: 0,
+          totalServiceMinutes: 0,
+          averageServiceMinutes: 0,
+          utilizationRate: 0,
+          idleMinutes: 2880
+        }
+      ]
+    },
     topPerformingShops: []
   })
 };
@@ -237,6 +325,13 @@ describe("BarberDashboard navigation", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Chairs" }));
     expect(screen.getByText("Manage Chairs")).toBeInTheDocument();
+    expect(screen.getByText("Chair Performance")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("Busiest Chair")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Avg Service: 23 min")).toBeInTheDocument();
+    expect(screen.getByText("Utilization: 3.1%")).toBeInTheDocument();
+    expect(screen.getByText("Idle Time: 1395 min")).toBeInTheDocument();
     expect(screen.queryByText("Order History")).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Walk-ins" }));
@@ -312,5 +407,32 @@ describe("BarberDashboard navigation", () => {
     expect(screen.getByText("No shop performance data yet.")).toBeInTheDocument();
     expect(screen.getAllByText("0")[0]).toBeInTheDocument();
     expect(screen.getByText("0.0%")).toBeInTheDocument();
+  });
+
+  test("reuses the shared date filters in the Chairs tab and renders the zero-activity state", async () => {
+    render(<BarberDashboard />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Chairs" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Busiest Chair")).toBeInTheDocument();
+    });
+    expect(screen.getAllByText("Chair 1").length).toBeGreaterThan(0);
+
+    await userEvent.click(screen.getByRole("button", { name: "Custom Range" }));
+    expect(screen.getByText("Select both dates to load a custom analytics range.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Analytics start date"), {
+      target: { value: "2026-05-01" }
+    });
+    fireEvent.change(screen.getByLabelText("Analytics end date"), {
+      target: { value: "2026-05-02" }
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("No chair activity in this range.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("No chair activity")).toBeInTheDocument();
+    expect(screen.getByText("0 bookings in this range")).toBeInTheDocument();
   });
 });
