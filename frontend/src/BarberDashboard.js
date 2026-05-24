@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import DashboardShell from "./DashboardShell";
 import QueueBoard from "./QueueBoard";
 import { useNotifications } from "./NotificationContext";
 import { detectBookingNotifications } from "./bookingNotifications";
@@ -8,10 +9,11 @@ import {
   getBookingServiceNames,
   getBookingTotalPrice
 } from "./bookingSnapshots";
+import { filterHistoryBookings } from "./historyFilters";
 
 const API_URL = "http://localhost:5000/api";
 
-function BarberDashboard() {
+function BarberDashboard({ user: injectedUser, onLogout }) {
   const analyticsPresets = [
     { id: "today", label: "Today" },
     { id: "week", label: "This Week" },
@@ -36,12 +38,16 @@ function BarberDashboard() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historyStartDate, setHistoryStartDate] = useState("");
+  const [historyEndDate, setHistoryEndDate] = useState("");
   const [customerProfiles, setCustomerProfiles] = useState({});
   const previousBookingsRef = useRef([]);
   const hasLoadedBookingsRef = useRef(false);
   const { notify } = useNotifications();
 
-  const user = JSON.parse(localStorage.getItem("user"));
+  const user = injectedUser || JSON.parse(localStorage.getItem("user"));
   const barberId = user?._id;
   const activeChairCount = chairs.filter((chair) => chair.isActive).length;
   const activeBookings = bookings.filter(
@@ -58,6 +64,7 @@ function BarberDashboard() {
     { id: "services", label: "Services" },
     { id: "walkins", label: "Walk-ins" }
   ];
+  const historyCount = bookingHistory.length;
 
   useEffect(() => {
     document.title = "Barber Dashboard";
@@ -513,6 +520,13 @@ function BarberDashboard() {
   const barberMetrics = analyticsData?.barberMetrics;
   const chairMetrics = analyticsData?.chairMetrics;
   const platformMetrics = analyticsData?.platformMetrics;
+  const filteredBookingHistory = filterHistoryBookings(bookingHistory, {
+    searchQuery: historySearchQuery,
+    statusFilter: historyStatusFilter,
+    startDate: historyStartDate,
+    endDate: historyEndDate,
+    includeCustomerName: true
+  });
   const servicePopularity = barberMetrics?.servicePopularity || [];
   const peakBookingHours = barberMetrics?.peakBookingHours || [];
   const topPerformingShops =
@@ -566,37 +580,61 @@ function BarberDashboard() {
     </div>
   );
 
-  return (
-    <div style={{ padding: "30px", maxWidth: "900px", margin: "0 auto" }}>
-      <h1>Barber Dashboard</h1>
+  const barberSummaryCards = [
+    {
+      label: "Active Bookings",
+      value: activeBookings.length,
+      hint: "Live queue + in-progress work"
+    },
+    {
+      label: "Active Chairs",
+      value: `${activeChairCount}/${chairs.length || 0}`,
+      hint: "Chairs available for service"
+    },
+    {
+      label: "History Entries",
+      value: historyCount,
+      hint: "Completed and cancelled orders"
+    },
+    {
+      label: "Shop Status",
+      value: isOpen ? "Open" : "Closed",
+      hint: isOpen ? "Accepting bookings now" : "Bookings paused"
+    }
+  ];
 
+  const barberShellActions = (
+    <>
       <button
+        className={`dashboard-shell__action dashboard-shell__action--status ${
+          isOpen ? "dashboard-shell__action--danger" : "dashboard-shell__action--success"
+        }`}
         onClick={toggleShop}
-        style={{
-          background: isOpen ? "red" : "green",
-          color: "white",
-          padding: "6px 12px",
-          border: "none",
-          marginBottom: "16px"
-        }}
+        type="button"
       >
         {isOpen ? "Close Shop" : "Open Shop"}
       </button>
+      {onLogout ? (
+        <button className="dashboard-shell__action dashboard-shell__action--ghost" onClick={onLogout} type="button">
+          Logout
+        </button>
+      ) : null}
+    </>
+  );
 
-      <div className="dashboard-nav" role="tablist" aria-label="Barber dashboard sections">
-        {dashboardSections.map((section) => (
-          <button
-            key={section.id}
-            className={`dashboard-nav__button ${
-              activeSection === section.id ? "dashboard-nav__button--active" : ""
-            }`}
-            onClick={() => setActiveSection(section.id)}
-            type="button"
-          >
-            {section.label}
-          </button>
-        ))}
-      </div>
+  return (
+    <DashboardShell
+      eyebrow="Barber workspace"
+      title="Barber Dashboard"
+      description="Run the floor, monitor performance, and keep chairs moving from one clean dashboard."
+      contextLabel="Signed in as"
+      contextValue={user?.name || "Barber"}
+      actions={barberShellActions}
+      navigation={dashboardSections}
+      activeSection={activeSection}
+      onSectionChange={setActiveSection}
+      summaryCards={barberSummaryCards}
+    >
 
       {activeSection === "chairs" && (
         <section>
@@ -1030,17 +1068,52 @@ function BarberDashboard() {
         <section>
           <h2>Order History</h2>
 
+          <div className="history-filter-bar">
+            <input
+              className="history-filter-input"
+              placeholder="Search by customer, service, or token"
+              aria-label="Barber history search"
+              value={historySearchQuery}
+              onChange={(e) => setHistorySearchQuery(e.target.value)}
+            />
+
+            <select
+              className="history-filter-input"
+              aria-label="Barber history status"
+              value={historyStatusFilter}
+              onChange={(e) => setHistoryStatusFilter(e.target.value)}
+            >
+              <option value="all">All statuses</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+
+            <input
+              className="history-filter-input"
+              type="date"
+              aria-label="Barber history start date"
+              max={historyEndDate || getLocalDateValue()}
+              value={historyStartDate}
+              onChange={(e) => setHistoryStartDate(e.target.value)}
+            />
+
+            <input
+              className="history-filter-input"
+              type="date"
+              aria-label="Barber history end date"
+              min={historyStartDate || undefined}
+              max={getLocalDateValue()}
+              value={historyEndDate}
+              onChange={(e) => setHistoryEndDate(e.target.value)}
+            />
+          </div>
+
           {bookingHistory.length === 0 ? (
             <p>No completed or cancelled orders yet.</p>
+          ) : filteredBookingHistory.length === 0 ? (
+            <p>No history results match the current filters.</p>
           ) : (
-            bookingHistory
-              .slice()
-              .sort(
-                (a, b) =>
-                  new Date(b.completedAt || b.cancelledAt || b.updatedAt || b.createdAt) -
-                  new Date(a.completedAt || a.cancelledAt || a.updatedAt || a.createdAt)
-              )
-              .map((booking) => (
+            filteredBookingHistory.map((booking) => (
                 <div key={booking._id} className="history-card">
                   <div className="loyalty-summary">
                     <span className={getBadgeClassName(getProfileForBooking(booking).badge)}>
@@ -1140,7 +1213,7 @@ function BarberDashboard() {
           <button onClick={addOfflineBooking}>Add to Queue</button>
         </section>
       )}
-    </div>
+    </DashboardShell>
   );
 }
 

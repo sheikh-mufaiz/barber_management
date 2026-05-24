@@ -20,32 +20,46 @@ function App() {
 
   if (!user) {
     return (
-      <div>
-        {showRegister ? <Register /> : <Login setUser={setUser} />}
+      <div className="auth-shell">
+        <div className="auth-shell__panel">
+          <div className="auth-shell__header">
+            <p className="dashboard-shell__eyebrow">Queue Manager</p>
+            <h1 className="auth-shell__title">Appointments, queues, and chair flow in one place.</h1>
+            <p className="auth-shell__copy">
+              Sign in to manage the shop floor or book your next visit with a cleaner dashboard
+              experience.
+            </p>
+          </div>
 
-        <button onClick={() => setShowRegister(!showRegister)}>
-          {showRegister ? "Go to Login" : "Go to Register"}
-        </button>
+          {showRegister ? <Register /> : <Login setUser={setUser} />}
+
+          <button className="auth-shell__toggle" onClick={() => setShowRegister(!showRegister)}>
+            {showRegister ? "Go to Login" : "Go to Register"}
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <NotificationProvider>
-      <div>
-        <h2>Welcome {user.name}</h2>
-
-        <button onClick={() => {
-          localStorage.removeItem("user");
-          setUser(null);
-        }}>
-          Logout
-        </button>
-
+      <div className="app-shell">
         {user.role === "barber" ? (
-          <BarberDashboard />
+          <BarberDashboard
+            user={user}
+            onLogout={() => {
+              localStorage.removeItem("user");
+              setUser(null);
+            }}
+          />
         ) : (
-          <Booking />
+          <Booking
+            user={user}
+            onLogout={() => {
+              localStorage.removeItem("user");
+              setUser(null);
+            }}
+          />
         )}
       </div>
     </NotificationProvider>

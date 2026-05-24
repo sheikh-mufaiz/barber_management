@@ -247,6 +247,21 @@ describe("BarberDashboard navigation", () => {
             status: "completed",
             completedAt: "2026-05-23T09:30:00.000Z",
             totalPrice: 50
+          },
+          {
+            _id: "booking-3",
+            barberId: "barber-1",
+            customerId: "customer-3",
+            customerName: "Kabir",
+            services: ["Beard"],
+            serviceItems: [{ name: "Beard", duration: 20, price: 80 }],
+            orderId: "9012",
+            totalTime: 20,
+            bookingType: "instant",
+            startTime: "2026-05-24T08:00:00.000Z",
+            status: "cancelled",
+            cancelledAt: "2026-05-24T08:20:00.000Z",
+            totalPrice: 80
           }
         ]);
       }
@@ -272,6 +287,16 @@ describe("BarberDashboard navigation", () => {
             badge: "New",
             favoriteServices: [{ name: "Wax", count: 1 }],
             topService: "Wax"
+          },
+          {
+            barberId: "barber-1",
+            customerId: "customer-3",
+            customerName: "Kabir",
+            visitCount: 0,
+            totalSpend: 0,
+            badge: "New",
+            favoriteServices: [],
+            topService: null
           }
         ]);
       }
@@ -318,6 +343,7 @@ describe("BarberDashboard navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByText("Order History")).toBeInTheDocument();
     expect(screen.getByText("Riya")).toBeInTheDocument();
+    expect(screen.getByText("Kabir")).toBeInTheDocument();
     expect(screen.getByText("Favorite Service: Wax")).toBeInTheDocument();
     expect(screen.getByText("Total: Rs 50")).toBeInTheDocument();
     expect(screen.getByText("Snapshot: Wax (Rs 50)")).toBeInTheDocument();
@@ -434,5 +460,47 @@ describe("BarberDashboard navigation", () => {
     });
     expect(screen.getByText("No chair activity")).toBeInTheDocument();
     expect(screen.getByText("0 bookings in this range")).toBeInTheDocument();
+  });
+
+  test("filters barber history by customer, service, token, status, and date", async () => {
+    render(<BarberDashboard />);
+
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Riya")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Kabir")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Barber history search"), "kabir");
+    expect(screen.getByText("Kabir")).toBeInTheDocument();
+    expect(screen.queryByText("Riya")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Barber history search"));
+    await userEvent.type(screen.getByLabelText("Barber history search"), "wax");
+    expect(screen.getByText("Riya")).toBeInTheDocument();
+    expect(screen.queryByText("Kabir")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Barber history search"));
+    await userEvent.type(screen.getByLabelText("Barber history search"), "9012");
+    expect(screen.getByText("Kabir")).toBeInTheDocument();
+    expect(screen.queryByText("Riya")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Barber history search"));
+    await userEvent.selectOptions(screen.getByLabelText("Barber history status"), "completed");
+    expect(screen.getByText("Riya")).toBeInTheDocument();
+    expect(screen.queryByText("Kabir")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Barber history start date"), {
+      target: { value: "2026-05-24" }
+    });
+    fireEvent.change(screen.getByLabelText("Barber history end date"), {
+      target: { value: "2026-05-24" }
+    });
+    expect(screen.getByText("No history results match the current filters.")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Barber history status"), "cancelled");
+    expect(screen.getByText("Kabir")).toBeInTheDocument();
+    expect(screen.queryByText("Riya")).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import DashboardShell from "./DashboardShell";
 import ShopList from "./ShopList";
 import QueueBoard from "./QueueBoard";
 import { useNotifications } from "./NotificationContext";
@@ -12,10 +13,11 @@ import {
   getBookingServiceNames,
   getBookingTotalPrice
 } from "./bookingSnapshots";
+import { filterHistoryBookings } from "./historyFilters";
 
 const API_URL = "http://localhost:5000/api";
 
-function Booking() {
+function Booking({ user: injectedUser, onLogout }) {
   const customerSections = [
     { id: "book", label: "Book" },
     { id: "queue", label: "Queue" },
@@ -37,16 +39,25 @@ function Booking() {
   const [estimateLoading, setEstimateLoading] = useState(false);
   const [customerProfile, setCustomerProfile] = useState(getDefaultProfile());
   const [profileLoading, setProfileLoading] = useState(false);
+  const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historyStartDate, setHistoryStartDate] = useState("");
+  const [historyEndDate, setHistoryEndDate] = useState("");
   const previousBookingsRef = useRef([]);
   const hasLoadedBookingsRef = useRef(false);
   const { notify } = useNotifications();
 
-  const user = JSON.parse(localStorage.getItem("user"));
+  const user = injectedUser || JSON.parse(localStorage.getItem("user"));
   const barberId = selectedBarber?._id;
 
   const getLocalDateTimeValue = (date = new Date()) => {
     const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
     return local.toISOString().slice(0, 16);
+  };
+
+  const getLocalDateValue = (date = new Date()) => {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 10);
   };
 
   const getWaitTime = (booking) => {
@@ -73,6 +84,13 @@ function Booking() {
   const customerHistory = customerBookings.filter(
     (booking) => booking.status === "completed" || booking.status === "cancelled"
   );
+  const filteredCustomerHistory = filterHistoryBookings(customerHistory, {
+    searchQuery: historySearchQuery,
+    statusFilter: historyStatusFilter,
+    startDate: historyStartDate,
+    endDate: historyEndDate,
+    includeCustomerName: false
+  });
 
   const getHistoryLabel = (booking) => {
     if (booking.status === "completed" && booking.completedAt) {
@@ -369,38 +387,74 @@ function Booking() {
     getBookings();
   };
 
-  return (
-    <div style={{ padding: "20px", fontFamily: "Arial" }}>
-      <h1>Barber Booking App</h1>
+  const customerSummaryCards = [
+    {
+      label: "Active Bookings",
+      value: activeCustomerBookings.length,
+      hint: selectedBarber ? "Current bookings with this shop" : "Select a shop to begin"
+    },
+    {
+      label: "Selected Shop",
+      value: selectedBarber ? `${activeChairs.length} active chairs` : "Not selected",
+      hint: selectedBarber ? selectedBarber.shopName : "Browse barbers to get started"
+    },
+    {
+      label: "Loyalty Badge",
+      value: customerProfile.badge || "New",
+      hint: profileLoading ? "Loading profile" : `${customerProfile.visitCount || 0} total visits`
+    },
+    {
+      label: "Total Spend",
+      value: formatCurrency(customerProfile.totalSpend || 0),
+      hint: selectedBarber ? "Snapshot-backed booking totals" : "Appears after choosing a shop"
+    }
+  ];
 
-      {!selectedBarber && <ShopList setSelectedBarber={setSelectedBarber} />}
+  const customerShellActions = onLogout ? (
+    <button className="dashboard-shell__action dashboard-shell__action--ghost" onClick={onLogout} type="button">
+      Logout
+    </button>
+  ) : null;
+
+  return (
+    <DashboardShell
+      eyebrow="Customer workspace"
+      title="Booking Dashboard"
+      description="Book services, track your queue, and review your visit history from one clean customer view."
+      contextLabel={selectedBarber ? "Current shop" : "Signed in as"}
+      contextValue={selectedBarber?.shopName || user?.name || "Customer"}
+      actions={customerShellActions}
+      navigation={selectedBarber ? customerSections : null}
+      activeSection={activeSection}
+      onSectionChange={setActiveSection}
+      summaryCards={customerSummaryCards}
+    >
+      {!selectedBarber && (
+        <section className="dashboard-page-section">
+          <div className="dashboard-page-section__header">
+            <h2>Choose a Shop</h2>
+            <p>Select a barber to unlock booking, queue, history, and profile tools.</p>
+          </div>
+
+          <div className="dashboard-surface dashboard-surface--spacious">
+            <ShopList setSelectedBarber={setSelectedBarber} />
+          </div>
+        </section>
+      )}
 
       {selectedBarber && (
         <>
-          <button
-            onClick={() => {
-              setSelectedBarber(null);
-              setActiveSection("book");
-            }}
-          >
-            Change Shop
-          </button>
-
-          <h2>{selectedBarber.shopName}</h2>
-
-          <div className="dashboard-nav" role="tablist" aria-label="Customer dashboard sections">
-            {customerSections.map((section) => (
-              <button
-                key={section.id}
-                className={`dashboard-nav__button ${
-                  activeSection === section.id ? "dashboard-nav__button--active" : ""
-                }`}
-                onClick={() => setActiveSection(section.id)}
-                type="button"
-              >
-                {section.label}
-              </button>
-            ))}
+          <div className="dashboard-utility-bar">
+            <button
+              className="dashboard-shell__action dashboard-shell__action--secondary"
+              onClick={() => {
+                setSelectedBarber(null);
+                setActiveSection("book");
+              }}
+              type="button"
+            >
+              Change Shop
+            </button>
           </div>
 
           {activeSection === "book" && (
@@ -586,17 +640,52 @@ function Booking() {
             <section>
               <h3>Order History</h3>
 
+              <div className="history-filter-bar">
+                <input
+                  className="history-filter-input"
+                  placeholder="Search by service or token"
+                  aria-label="Customer history search"
+                  value={historySearchQuery}
+                  onChange={(e) => setHistorySearchQuery(e.target.value)}
+                />
+
+                <select
+                  className="history-filter-input"
+                  aria-label="Customer history status"
+                  value={historyStatusFilter}
+                  onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                >
+                  <option value="all">All statuses</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+
+                <input
+                  className="history-filter-input"
+                  type="date"
+                  aria-label="Customer history start date"
+                  max={historyEndDate || getLocalDateValue()}
+                  value={historyStartDate}
+                  onChange={(e) => setHistoryStartDate(e.target.value)}
+                />
+
+                <input
+                  className="history-filter-input"
+                  type="date"
+                  aria-label="Customer history end date"
+                  min={historyStartDate || undefined}
+                  max={getLocalDateValue()}
+                  value={historyEndDate}
+                  onChange={(e) => setHistoryEndDate(e.target.value)}
+                />
+              </div>
+
               {customerHistory.length === 0 ? (
                 <p>No completed or cancelled orders yet.</p>
+              ) : filteredCustomerHistory.length === 0 ? (
+                <p>No history results match the current filters.</p>
               ) : (
-                customerHistory
-                  .slice()
-                  .sort(
-                    (a, b) =>
-                      new Date(b.completedAt || b.cancelledAt || b.updatedAt || b.createdAt) -
-                      new Date(a.completedAt || a.cancelledAt || a.updatedAt || a.createdAt)
-                  )
-                  .map((booking) => (
+                filteredCustomerHistory.map((booking) => (
                     <div
                       key={booking._id}
                       className="history-card"
@@ -731,7 +820,7 @@ function Booking() {
           )}
         </>
       )}
-    </div>
+    </DashboardShell>
   );
 }
 

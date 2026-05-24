@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Booking from "./Booking";
 
@@ -89,6 +89,22 @@ describe("Booking customer navigation", () => {
             status: "completed",
             chairName: "Chair 1",
             completedAt: "2026-05-24T09:30:00.000Z"
+          },
+          {
+            _id: "booking-3",
+            barberId: "barber-1",
+            customerId: "customer-1",
+            customerName: "Aman",
+            services: ["Haircut"],
+            serviceItems: [{ name: "Haircut", duration: 15, price: 100 }],
+            totalPrice: 100,
+            orderId: "9012",
+            totalTime: 15,
+            bookingType: "instant",
+            startTime: "2026-05-23T11:00:00.000Z",
+            status: "cancelled",
+            chairName: "Chair 1",
+            cancelledAt: "2026-05-23T11:20:00.000Z"
           }
         ]);
       }
@@ -148,7 +164,7 @@ describe("Booking customer navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Select Style Studio" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Style Studio")).toBeInTheDocument();
+      expect(screen.getAllByText("Style Studio").length).toBeGreaterThan(0);
     });
 
     expect(screen.getByRole("button", { name: "Book" })).toBeInTheDocument();
@@ -173,6 +189,7 @@ describe("Booking customer navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "History" }));
     expect(screen.getByText("Order History")).toBeInTheDocument();
     expect(screen.getByText("Order: 5678")).toBeInTheDocument();
+    expect(screen.getByText("Order: 9012")).toBeInTheDocument();
     expect(screen.getByText("Total: Rs 50")).toBeInTheDocument();
     expect(screen.getAllByText("Snapshot: Wax (Rs 50)").length).toBeGreaterThan(0);
     expect(screen.queryByText("Your Active Bookings")).not.toBeInTheDocument();
@@ -181,8 +198,8 @@ describe("Booking customer navigation", () => {
     await waitFor(() => {
       expect(screen.getByText("Your Loyalty Profile")).toBeInTheDocument();
     });
-    expect(screen.getByText("Regular")).toBeInTheDocument();
-    expect(screen.getByText("Rs 300")).toBeInTheDocument();
+    expect(screen.getAllByText("Regular").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Rs 300").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Haircut").length).toBeGreaterThan(0);
     expect(screen.queryByText("Your Active Bookings")).not.toBeInTheDocument();
 
@@ -267,7 +284,7 @@ describe("Booking customer navigation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Select Style Studio" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Style Studio")).toBeInTheDocument();
+      expect(screen.getAllByText("Style Studio").length).toBeGreaterThan(0);
     });
 
     await waitFor(() => {
@@ -284,5 +301,46 @@ describe("Booking customer navigation", () => {
     });
 
     expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  test("filters customer history by search, status, and date range", async () => {
+    render(<Booking />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Select Style Studio" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Style Studio").length).toBeGreaterThan(0);
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "History" }));
+
+    expect(screen.getByText("Order: 5678")).toBeInTheDocument();
+    expect(screen.getByText("Order: 9012")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Customer history search"), "wax");
+    expect(screen.getByText("Order: 5678")).toBeInTheDocument();
+    expect(screen.queryByText("Order: 9012")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Customer history search"));
+    await userEvent.type(screen.getByLabelText("Customer history search"), "9012");
+    expect(screen.getByText("Order: 9012")).toBeInTheDocument();
+    expect(screen.queryByText("Order: 5678")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Customer history search"));
+    await userEvent.selectOptions(screen.getByLabelText("Customer history status"), "cancelled");
+    expect(screen.getByText("Order: 9012")).toBeInTheDocument();
+    expect(screen.queryByText("Order: 5678")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Customer history start date"), {
+      target: { value: "2026-05-24" }
+    });
+    fireEvent.change(screen.getByLabelText("Customer history end date"), {
+      target: { value: "2026-05-24" }
+    });
+    expect(screen.getByText("No history results match the current filters.")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText("Customer history status"), "completed");
+    expect(screen.getByText("Order: 5678")).toBeInTheDocument();
+    expect(screen.queryByText("Order: 9012")).not.toBeInTheDocument();
   });
 });
