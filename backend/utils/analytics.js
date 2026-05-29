@@ -115,24 +115,354 @@ const buildPeakBookingHours = (bookings) =>
 const getRangeDurationMinutes = (range) =>
   Math.max(1, Math.round((range.end.getTime() - range.start.getTime() + 1) / 60000));
 
-const buildChairMetrics = ({ chairs = [], bookings = [], range }) => {
-  const normalizedChairs = sanitizeChairs(chairs);
-  const rangeMinutes = getRangeDurationMinutes(range);
-  const nonCancelledBookings = bookings.filter(
-    (booking) => booking.status !== "cancelled" && booking.chairId
+const normalizeShopSessions = (shopSessions = []) =>
+  Array.isArray(shopSessions)
+    ? shopSessions
+        .map((session) => {
+          const openedAt = getValidDate(session?.openedAt);
+          const closedAt = session?.closedAt ? getValidDate(session.closedAt) : null;
+
+          if (!openedAt) {
+            return null;
+          }
+
+          return {
+            openedAt,
+            closedAt: closedAt && closedAt >= openedAt ? closedAt : null
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.openedAt - b.openedAt)
+    : [];
+
+const getSessionOverlapMinutes = ({ session, range, now }) => {
+  const effectiveClose = session.closedAt
+    ? new Date(Math.min(session.closedAt.getTime(), range.end.getTime()))
+    : new Date(Math.min(now.getTime(), range.end.getTime()));
+  const effectiveOpen = new Date(Math.max(session.openedAt.getTime(), range.start.getTime()));
+
+  if (effectiveClose < effectiveOpen) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((effectiveClose.getTime() - effectiveOpen.getTime() + 1) / 60000));
+};
+
+const normalizeChairSessions = (chairSessions = []) =>
+  Array.isArray(chairSessions)
+    ? chairSessions
+        .map((session) => {
+          const startedAt = getValidDate(session?.startedAt);
+          const endedAt = session?.endedAt ? getValidDate(session.endedAt) : null;
+
+          if (!startedAt) {
+            return null;
+          }
+
+          return {
+            startedAt,
+            endedAt: endedAt && endedAt >= startedAt ? endedAt : null
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.startedAt - b.startedAt)
+    : [];
+
+const getChairSessionOverlapMinutes = ({ session, range, now }) => {
+  const effectiveClose = session.endedAt
+    ? new Date(Math.min(session.endedAt.getTime(), range.end.getTime()))
+    : new Date(Math.min(now.getTime(), range.end.getTime()));
+  const effectiveOpen = new Date(Math.max(session.startedAt.getTime(), range.start.getTime()));
+
+  if (effectiveClose < effectiveOpen) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((effectiveClose.getTime() - effectiveOpen.getTime() + 1) / 60000));
+};
+
+const getDateOverlapMinutes = ({ start, end, range }) => {
+  const validStart = getValidDate(start);
+  const validEnd = getValidDate(end);
+
+  if (!validStart || !validEnd) {
+    return 0;
+  }
+
+  const effectiveStart = new Date(Math.max(validStart.getTime(), range.start.getTime()));
+  const effectiveEnd = new Date(Math.min(validEnd.getTime(), range.end.getTime()));
+
+  if (effectiveEnd < effectiveStart) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((effectiveEnd.getTime() - effectiveStart.getTime() + 1) / 60000));
+};
+
+const getBookingElapsedServiceMinutes = ({ booking, range, now = new Date() }) => {
+  if (!booking || booking.status === "cancelled") {
+    return 0;
+  }
+
+  const fallbackTotalTime = Math.max(0, Number(booking.totalTime || 0));
+  const startAt = getValidDate(booking.actualStartTime) || getValidDate(booking.startTime);
+
+  if (booking.status === "completed") {
+    const completedAt = getValidDate(booking.completedAt);
+    const rangedElapsed = getDateOverlapMinutes({
+      start: startAt,
+      end: completedAt,
+      range
+    });
+
+    if (rangedElapsed > 0) {
+      return rangedElapsed;
+    }
+
+    return fallbackTotalTime;
+  }
+
+  if (booking.status === "in-progress") {
+    if (!startAt) {
+      return 0;
+    }
+
+    const cappedEnd = fallbackTotalTime
+      ? new Date(Math.min(now.getTime(), startAt.getTime() + fallbackTotalTime * 60000))
+      : now;
+    const rangedElapsed = getDateOverlapMinutes({
+      start: startAt,
+      end: cappedEnd,
+      range
+    });
+
+    if (!fallbackTotalTime) {
+      return rangedElapsed;
+    }
+
+    return Math.min(fallbackTotalTime, rangedElapsed);
+  }
+
+  return 0;
+};
+
+const getOpenRangeMinutes = ({
+  shopSessions = [],
+  range,
+  now = new Date(),
+  isOpen = false
+}) => {
+  const normalizedShopSessions = normalizeShopSessions(shopSessions);
+  const overlappingShopSessions = normalizedShopSessions.filter((session) => {
+    const sessionEnd = session.closedAt || now;
+    return sessionEnd >= range.start && session.openedAt <= range.end;
+  });
+  const sessionOverlapMinutes = overlappingShopSessions.reduce(
+    (sum, session) => sum + getSessionOverlapMinutes({ session, range, now }),
+    0
   );
+
+  if (sessionOverlapMinutes === 0) {
+    if (!isOpen) {
+      return 0;
+    }
+
+    const fallbackEnd = new Date(Math.min(now.getTime(), range.end.getTime()));
+
+    if (fallbackEnd < range.start) {
+      return 0;
+    }
+
+    return Math.max(0, Math.round((fallbackEnd.getTime() - range.start.getTime() + 1) / 60000));
+  }
+
+  if (
+    !isOpen ||
+    overlappingShopSessions.length !== 1 ||
+    overlappingShopSessions[0].closedAt !== null ||
+    overlappingShopSessions[0].openedAt <= range.start
+  ) {
+    return sessionOverlapMinutes;
+  }
+
+  const preludeEnd = new Date(overlappingShopSessions[0].openedAt.getTime() - 1);
+
+  if (preludeEnd < range.start) {
+    return sessionOverlapMinutes;
+  }
+
+  const preludeMinutes = Math.max(
+    0,
+    Math.round((preludeEnd.getTime() - range.start.getTime() + 1) / 60000)
+  );
+
+  return sessionOverlapMinutes + preludeMinutes;
+};
+
+const getChairOpenRangeMinutes = ({
+  chairSessions = [],
+  range,
+  now = new Date(),
+  isChairActive = false,
+  shopOpenRangeMinutes = 0,
+  shopSessions = [],
+  isOpen = false
+}) => {
+  const normalizedChairSessions = normalizeChairSessions(chairSessions);
+  const chairSessionOverlapMinutes = normalizedChairSessions.reduce(
+    (sum, session) => sum + getChairSessionOverlapMinutes({ session, range, now }),
+    0
+  );
+
+  if (!isChairActive && chairSessionOverlapMinutes === 0) {
+    return 0;
+  }
+
+  if (chairSessionOverlapMinutes === 0) {
+    return shopOpenRangeMinutes;
+  }
+
+  if (
+    !isChairActive ||
+    normalizedChairSessions.filter((session) => {
+      const sessionEnd = session.endedAt || now;
+      return sessionEnd >= range.start && session.startedAt <= range.end;
+    }).length !== 1
+  ) {
+    return chairSessionOverlapMinutes;
+  }
+
+  const firstOverlappingSession = normalizedChairSessions.find((session) => {
+    const sessionEnd = session.endedAt || now;
+    return sessionEnd >= range.start && session.startedAt <= range.end;
+  });
+
+  if (
+    !firstOverlappingSession ||
+    firstOverlappingSession.endedAt !== null ||
+    firstOverlappingSession.startedAt <= range.start
+  ) {
+    return chairSessionOverlapMinutes;
+  }
+
+  const preludeEnd = new Date(firstOverlappingSession.startedAt.getTime() - 1);
+
+  if (preludeEnd < range.start) {
+    return chairSessionOverlapMinutes;
+  }
+
+  const backfilledPreludeMinutes = getOpenRangeMinutes({
+    shopSessions,
+    range: {
+      start: range.start,
+      end: preludeEnd
+    },
+    now,
+    isOpen
+  });
+
+  return chairSessionOverlapMinutes + backfilledPreludeMinutes;
+};
+
+const buildChairRevenueHistory = ({ bookings = [], legacyServiceMap = {} }) => {
+  const historyByDate = bookings.reduce((map, booking) => {
+    const eventDate = getBookingEventDate(booking);
+
+    if (!eventDate) {
+      return map;
+    }
+
+    const dateKey = eventDate.toISOString().slice(0, 10);
+    const revenue = getBookingTotalPrice(booking, legacyServiceMap);
+
+    if (!map[dateKey]) {
+      map[dateKey] = {
+        date: dateKey,
+        revenue: 0,
+        transactions: []
+      };
+    }
+
+    map[dateKey].revenue += revenue;
+    map[dateKey].transactions.push({
+      bookingId: String(booking._id || ""),
+      orderId: booking.orderId || "",
+      customerName: booking.customerName || "Walk-in customer",
+      services: booking.services || [],
+      status: booking.status || "booked",
+      revenue,
+      eventTime: eventDate.toISOString()
+    });
+
+    return map;
+  }, {});
+
+  return Object.values(historyByDate)
+    .map((group) => ({
+      ...group,
+      transactions: group.transactions.sort(
+        (a, b) => new Date(a.eventTime) - new Date(b.eventTime) || a.customerName.localeCompare(b.customerName)
+      )
+    }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+};
+
+const buildChairMetrics = ({
+  chairs = [],
+  bookings = [],
+  range,
+  shopSessions = [],
+  now = new Date(),
+  isOpen = false,
+  legacyServiceMap = {}
+}) => {
+  const normalizedChairs = sanitizeChairs(chairs);
+  const shopOpenRangeMinutes = getOpenRangeMinutes({ shopSessions, range, now, isOpen });
+  const nonCancelledBookings = bookings.filter((booking) => booking.status !== "cancelled");
+  const assignedBookings = nonCancelledBookings.filter((booking) => booking.chairId);
+  const unassignedRevenue = nonCancelledBookings
+    .filter((booking) => !booking.chairId)
+    .reduce((sum, booking) => sum + getBookingTotalPrice(booking, legacyServiceMap), 0);
   const metricsByChair = normalizedChairs.map((chair) => {
-    const chairBookings = nonCancelledBookings.filter((booking) => String(booking.chairId) === String(chair.id));
+    const chairOpenRangeMinutes = getChairOpenRangeMinutes({
+      chairSessions: chair.sessions,
+      range,
+      now,
+      isChairActive: chair.isActive !== false,
+      shopOpenRangeMinutes,
+      shopSessions,
+      isOpen
+    });
+    const chairBookings = assignedBookings.filter((booking) => String(booking.chairId) === String(chair.id));
     const totalServiceMinutes = chairBookings.reduce(
       (sum, booking) => sum + Math.max(0, Number(booking.totalTime || 0)),
+      0
+    );
+    const elapsedServiceMinutes = chairBookings.reduce(
+      (sum, booking) => sum + getBookingElapsedServiceMinutes({ booking, range, now }),
       0
     );
     const bookingCount = chairBookings.length;
     const averageServiceMinutes = bookingCount
       ? Number((totalServiceMinutes / bookingCount).toFixed(1))
       : 0;
-    const utilizationRate = Number(((totalServiceMinutes / rangeMinutes) * 100).toFixed(1));
-    const idleMinutes = Math.max(0, rangeMinutes - totalServiceMinutes);
+    const estimatedRevenue = chairBookings.reduce(
+      (sum, booking) => sum + getBookingTotalPrice(booking, legacyServiceMap),
+      0
+    );
+    const completedRevenue = chairBookings
+      .filter((booking) => booking.status === "completed")
+      .reduce((sum, booking) => sum + getBookingTotalPrice(booking, legacyServiceMap), 0);
+    const averageBookingValue = bookingCount
+      ? Number((estimatedRevenue / bookingCount).toFixed(1))
+      : 0;
+    const revenuePerServiceHour = totalServiceMinutes
+      ? Number((estimatedRevenue / (totalServiceMinutes / 60)).toFixed(1))
+      : 0;
+    const utilizationRate = chairOpenRangeMinutes
+      ? Number((Math.min(100, (elapsedServiceMinutes / chairOpenRangeMinutes) * 100)).toFixed(1))
+      : 0;
+    const idleMinutes = Math.max(0, chairOpenRangeMinutes - elapsedServiceMinutes);
 
     return {
       chairId: chair.id,
@@ -141,6 +471,14 @@ const buildChairMetrics = ({ chairs = [], bookings = [], range }) => {
       bookingCount,
       totalServiceMinutes,
       averageServiceMinutes,
+      estimatedRevenue,
+      completedRevenue,
+      averageBookingValue,
+      revenuePerServiceHour,
+      revenueHistory: buildChairRevenueHistory({
+        bookings: chairBookings,
+        legacyServiceMap
+      }),
       utilizationRate,
       idleMinutes
     };
@@ -154,25 +492,44 @@ const buildChairMetrics = ({ chairs = [], bookings = [], range }) => {
         b.totalServiceMinutes - a.totalServiceMinutes ||
         a.chairName.localeCompare(b.chairName)
     )[0] || null;
+  const topRevenueChair = metricsByChair
+    .slice()
+    .sort(
+      (a, b) =>
+        b.estimatedRevenue - a.estimatedRevenue ||
+        b.completedRevenue - a.completedRevenue ||
+        a.chairName.localeCompare(b.chairName)
+    )[0] || null;
+  const totalChairRevenue = metricsByChair.reduce(
+    (sum, chair) => sum + Number(chair.estimatedRevenue || 0),
+    0
+  );
 
   return {
     summary: {
       busiestChairId: busiestChair?.chairId || null,
       busiestChairName: busiestChair?.chairName || "No chair activity",
-      busiestChairBookings: busiestChair?.bookingCount || 0
+      busiestChairBookings: busiestChair?.bookingCount || 0,
+      topRevenueChairId: topRevenueChair?.estimatedRevenue ? topRevenueChair.chairId : null,
+      topRevenueChairName: topRevenueChair?.estimatedRevenue
+        ? topRevenueChair.chairName
+        : "No chair revenue",
+      topRevenue: topRevenueChair?.estimatedRevenue || 0,
+      totalChairRevenue,
+      unassignedRevenue
     },
     perChair: metricsByChair
   };
 };
 
-const buildBarberMetrics = async ({ barberId, bookings }) => {
-  const legacyServiceMap = await buildLegacyServicePriceMap(barberId);
+const buildBarberMetrics = async ({ barberId, bookings, legacyServiceMap }) => {
+  const serviceMap = legacyServiceMap || (await buildLegacyServicePriceMap(barberId));
   const nonCancelledBookings = bookings.filter((booking) => booking.status !== "cancelled");
 
   return {
     totalBookings: nonCancelledBookings.length,
     estimatedRevenue: nonCancelledBookings.reduce(
-      (sum, booking) => sum + getBookingTotalPrice(booking, legacyServiceMap),
+      (sum, booking) => sum + getBookingTotalPrice(booking, serviceMap),
       0
     ),
     servicePopularity: buildServicePopularity(nonCancelledBookings),
@@ -217,6 +574,21 @@ const buildPlatformMetrics = ({ bookings, allBookings, barbersById, range }) => 
       : 0,
     topPerformingShops,
     activeBarberBookings: completedOrActiveBookings.length
+  };
+};
+
+const buildBarberOverviewMetrics = ({ barber, bookings, allBookings, range }) => {
+  const cancelledBookings = bookings.filter((booking) => booking.status === "cancelled").length;
+
+  return {
+    shopOverview: {
+      isOpen: Boolean(barber?.isOpen)
+    },
+    totalBookings: bookings.length,
+    customerGrowth: buildCustomerGrowth({ bookings: allBookings, range }),
+    cancellationRate: bookings.length
+      ? Number(((cancelledBookings / bookings.length) * 100).toFixed(1))
+      : 0
   };
 };
 
@@ -276,16 +648,31 @@ const getAnalyticsOverview = async ({
     map[String(barber._id)] = barber;
     return map;
   }, {});
+  const currentBarber = barbersById[String(barberId)];
+  const allBarberBookings = allBookings.filter(
+    (booking) => String(booking.barberId) === String(barberId)
+  );
+  const legacyServiceMap = await buildLegacyServicePriceMap(barberId);
   const platformMetrics = buildPlatformMetrics({
     bookings: filteredBookings,
     allBookings,
     barbersById,
     range
   });
-  const chairMetrics = buildChairMetrics({
-    chairs: barbersById[String(barberId)]?.chairs || [],
+  const barberOverviewMetrics = buildBarberOverviewMetrics({
+    barber: currentBarber,
     bookings: barberBookings,
+    allBookings: allBarberBookings,
     range
+  });
+  const chairMetrics = buildChairMetrics({
+    chairs: currentBarber?.chairs || [],
+    bookings: barberBookings,
+    range,
+    shopSessions: currentBarber?.shopSessions || [],
+    now,
+    isOpen: Boolean(currentBarber?.isOpen),
+    legacyServiceMap
   });
 
   return {
@@ -296,9 +683,11 @@ const getAnalyticsOverview = async ({
     },
     barberMetrics: await buildBarberMetrics({
       barberId,
-      bookings: barberBookings
+      bookings: barberBookings,
+      legacyServiceMap
     }),
     chairMetrics,
+    barberOverviewMetrics,
     platformMetrics,
     topPerformingShops: platformMetrics.topPerformingShops
   };
@@ -306,6 +695,7 @@ const getAnalyticsOverview = async ({
 
 module.exports = {
   buildBarberMetrics,
+  buildBarberOverviewMetrics,
   buildChairMetrics,
   buildCustomerGrowth,
   buildPeakBookingHours,
@@ -314,6 +704,9 @@ module.exports = {
   filterBookingsByRange,
   getAnalyticsOverview,
   getBookingEventDate,
+  getBookingElapsedServiceMinutes,
+  getChairOpenRangeMinutes,
+  getOpenRangeMinutes,
   getRangeDurationMinutes,
   getRangeForPreset,
   getBookingRevenue: getBookingTotalPrice

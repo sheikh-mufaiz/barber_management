@@ -34,6 +34,13 @@ const createFetchResponse = (data) =>
     json: async () => data
   });
 
+const createErrorResponse = (data, status = 400) =>
+  Promise.resolve({
+    ok: false,
+    status,
+    json: async () => data
+  });
+
 describe("Booking customer navigation", () => {
   beforeEach(() => {
     localStorage.setItem(
@@ -342,5 +349,59 @@ describe("Booking customer navigation", () => {
     await userEvent.selectOptions(screen.getByLabelText("Customer history status"), "completed");
     expect(screen.getByText("Order: 5678")).toBeInTheDocument();
     expect(screen.queryByText("Order: 9012")).not.toBeInTheDocument();
+  });
+
+  test("shows a friendly error when booking estimate fails", async () => {
+    global.fetch = jest.fn((url) => {
+      if (url.includes("/services/")) {
+        return createFetchResponse([
+          { _id: "svc-1", name: "Haircut", duration: 15, price: 100 }
+        ]);
+      }
+
+      if (url.includes("/chairs/")) {
+        return createFetchResponse([{ id: "chair-1", name: "Chair 1", isActive: true }]);
+      }
+
+      if (url.includes("/bookings")) {
+        return createFetchResponse([]);
+      }
+
+      if (url.includes("/customer-profile/")) {
+        return createFetchResponse({
+          barberId: "barber-1",
+          customerId: "customer-1",
+          customerName: "Aman",
+          visitCount: 0,
+          totalSpend: 0,
+          badge: "New",
+          favoriteServices: [],
+          topService: null,
+          recentBookings: []
+        });
+      }
+
+      if (url.includes("/estimate-booking")) {
+        return createErrorResponse({
+          available: false,
+          message: "No active chairs available right now"
+        }, 409);
+      }
+
+      return createFetchResponse({});
+    });
+
+    render(<Booking />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Select Style Studio" }));
+    await waitFor(() => {
+      expect(screen.getByText("Haircut")).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByText("Haircut"));
+
+    await waitFor(() => {
+      expect(screen.getByText("No active chairs available right now")).toBeInTheDocument();
+    });
   });
 });

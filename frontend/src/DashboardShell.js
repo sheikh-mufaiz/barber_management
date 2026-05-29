@@ -1,6 +1,7 @@
 import React from "react";
 
 function DashboardShell({
+  theme = "default",
   eyebrow,
   title,
   description,
@@ -14,8 +15,9 @@ function DashboardShell({
   children
 }) {
   return (
-    <div className="dashboard-shell">
+    <div className={`dashboard-shell dashboard-shell--${theme}`}>
       <header className="dashboard-shell__hero">
+        <div className="dashboard-shell__hero-glow" aria-hidden="true" />
         <div className="dashboard-shell__hero-copy">
           {eyebrow ? <p className="dashboard-shell__eyebrow">{eyebrow}</p> : null}
           <h1 className="dashboard-shell__title">{title}</h1>

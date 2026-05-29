@@ -14,8 +14,9 @@ import {
   getBookingTotalPrice
 } from "./bookingSnapshots";
 import { filterHistoryBookings } from "./historyFilters";
+import { apiFetch } from "./api";
 
-const API_URL = "http://localhost:5000/api";
+const BOOKING_REFRESH_MS = 5000;
 
 function Booking({ user: injectedUser, onLogout }) {
   const customerSections = [
@@ -43,6 +44,7 @@ function Booking({ user: injectedUser, onLogout }) {
   const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
   const [historyStartDate, setHistoryStartDate] = useState("");
   const [historyEndDate, setHistoryEndDate] = useState("");
+  const [dashboardError, setDashboardError] = useState("");
   const previousBookingsRef = useRef([]);
   const hasLoadedBookingsRef = useRef(false);
   const { notify } = useNotifications();
@@ -78,6 +80,7 @@ function Booking({ user: injectedUser, onLogout }) {
   const activeBookings = bookings.filter(
     (booking) => booking.status === "booked" || booking.status === "in-progress"
   );
+  const inProgressBookings = activeBookings.filter((booking) => booking.status === "in-progress");
   const activeCustomerBookings = customerBookings.filter(
     (booking) => booking.status === "booked" || booking.status === "in-progress"
   );
@@ -114,13 +117,16 @@ function Booking({ user: injectedUser, onLogout }) {
     if (!barberId) return;
 
     try {
-      const res = await fetch(`${API_URL}/services/${barberId}`);
+      const res = await apiFetch(`/services/${barberId}`);
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Could not load services");
+      }
       setServices(data);
     } catch (err) {
       console.error("GET SERVICES ERROR:", err);
       setServices([]);
-      setMessage("Cannot reach server. Please make sure backend is running.");
+      setMessage(err.message || "Cannot reach server. Please make sure backend is running.");
     }
   };
 
@@ -128,8 +134,11 @@ function Booking({ user: injectedUser, onLogout }) {
     if (!barberId) return;
 
     try {
-      const res = await fetch(`${API_URL}/bookings`);
+      const res = await apiFetch(`/bookings?barberId=${encodeURIComponent(barberId)}`);
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Could not load bookings");
+      }
 
       const filtered = data
         .filter((booking) => String(booking.barberId) === String(barberId))
@@ -153,7 +162,7 @@ function Booking({ user: injectedUser, onLogout }) {
     } catch (err) {
       console.error("GET BOOKINGS ERROR:", err);
       setBookings([]);
-      setMessage("Cannot reach server. Please make sure backend is running.");
+      setDashboardError(err.message || "Cannot refresh bookings.");
     }
   };
 
@@ -161,12 +170,16 @@ function Booking({ user: injectedUser, onLogout }) {
     if (!barberId) return;
 
     try {
-      const res = await fetch(`${API_URL}/chairs/${barberId}`);
+      const res = await apiFetch(`/chairs/${barberId}`);
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Could not load chairs");
+      }
       setChairs(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("GET CHAIRS ERROR:", err);
       setChairs([]);
+      setDashboardError(err.message || "Could not load chairs.");
     }
   };
 
@@ -178,8 +191,11 @@ function Booking({ user: injectedUser, onLogout }) {
 
     try {
       setProfileLoading(true);
-      const res = await fetch(`${API_URL}/customer-profile/${barberId}/${user._id}`);
+      const res = await apiFetch(`/customer-profile/${barberId}/${user._id}`);
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Could not load profile");
+      }
       setCustomerProfile(
         data && typeof data === "object"
           ? {
@@ -233,7 +249,7 @@ function Booking({ user: injectedUser, onLogout }) {
 
     const interval = setInterval(() => {
       getBookings();
-    }, 2000);
+    }, BOOKING_REFRESH_MS);
 
     return () => clearInterval(interval);
   }, [barberId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -255,7 +271,7 @@ function Booking({ user: injectedUser, onLogout }) {
       try {
         setEstimateLoading(true);
 
-        const res = await fetch(`${API_URL}/estimate-booking`, {
+        const res = await apiFetch(`/estimate-booking`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -333,7 +349,7 @@ function Booking({ user: injectedUser, onLogout }) {
       if (!confirmBooking) return;
     }
 
-    const res = await fetch(`${API_URL}/book`, {
+    const res = await apiFetch(`/book`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -373,18 +389,19 @@ function Booking({ user: injectedUser, onLogout }) {
   };
 
   const cancelBooking = async (id) => {
-    await fetch(`${API_URL}/cancel/${id}`, {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        userId: user._id,
-        role: user.role
-      })
-    });
+    try {
+      const res = await apiFetch(`/cancel/${id}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || "Could not cancel booking");
+      }
 
-    getBookings();
+      getBookings();
+    } catch (err) {
+      setDashboardError(err.message || "Could not cancel booking.");
+    }
   };
 
   const customerSummaryCards = [
@@ -418,6 +435,7 @@ function Booking({ user: injectedUser, onLogout }) {
 
   return (
     <DashboardShell
+      theme="customer"
       eyebrow="Customer workspace"
       title="Booking Dashboard"
       description="Book services, track your queue, and review your visit history from one clean customer view."
@@ -429,14 +447,27 @@ function Booking({ user: injectedUser, onLogout }) {
       onSectionChange={setActiveSection}
       summaryCards={customerSummaryCards}
     >
+      {dashboardError ? (
+        <p className="form-feedback form-feedback--error">{dashboardError}</p>
+      ) : null}
+
       {!selectedBarber && (
-        <section className="dashboard-page-section">
-          <div className="dashboard-page-section__header">
-            <h2>Choose a Shop</h2>
-            <p>Select a barber to unlock booking, queue, history, and profile tools.</p>
+        <section className="dashboard-page-section customer-shop-discovery">
+          <div className="customer-shop-discovery__intro">
+            <div>
+              <p className="customer-shop-discovery__eyebrow">Shop discovery</p>
+              <h2>Choose a Shop</h2>
+              <p>Select a barber to unlock booking, queue, history, and profile tools.</p>
+            </div>
+
+            <div className="customer-shop-discovery__status">
+              <span>Ready to book</span>
+              <strong>{activeCustomerBookings.length}</strong>
+              <small>active bookings</small>
+            </div>
           </div>
 
-          <div className="dashboard-surface dashboard-surface--spacious">
+          <div className="dashboard-surface dashboard-surface--spacious customer-shop-discovery__surface">
             <ShopList setSelectedBarber={setSelectedBarber} />
           </div>
         </section>
@@ -458,189 +489,325 @@ function Booking({ user: injectedUser, onLogout }) {
           </div>
 
           {activeSection === "book" && (
-            <section>
-              <h3>Select Services</h3>
-
-              {services.map((service) => (
-                <div
-                  key={service._id}
-                  onClick={() => toggleService(service)}
-                  style={{
-                    border: "1px solid #ccc",
-                    padding: "10px",
-                    marginBottom: "10px",
-                    borderRadius: "8px",
-                    cursor: "pointer",
-                    background: selectedServices.find((item) => item._id === service._id)
-                      ? "#ddd"
-                      : "white"
-                  }}
-                >
-                  <p>
-                    <b>{service.name}</b>
-                  </p>
-                  <p>{service.duration} min</p>
-                  <p>Rs {service.price}</p>
+            <section className="dashboard-page-section customer-book-page">
+              <div className="customer-book-page__intro">
+                <div>
+                  <p className="customer-shop-discovery__eyebrow">Book a visit</p>
+                  <h3>Select Services</h3>
+                  <p>Build your visit with richer service cards, then choose instant or scheduled booking.</p>
                 </div>
-              ))}
 
-              <p>Total Time: {selectedTotalTime} min</p>
-
-              {selectedServices.length > 0 && (
-                <div
-                  style={{
-                    border: "1px solid #ddd",
-                    padding: "10px",
-                    marginTop: "10px",
-                    borderRadius: "8px",
-                    background: "#f9f9f9"
-                  }}
-                >
-                  {estimateLoading ? (
-                    <p>Checking expected start...</p>
-                  ) : bookingEstimate?.available ? (
-                    <>
-                      <p>
-                        Expected start:{" "}
-                        {new Date(bookingEstimate.estimatedStartTime).toLocaleTimeString()}
-                      </p>
-                      <p>Waiting: {bookingEstimate.waitMinutes || 0} min</p>
-                      <p>Chair: {bookingEstimate.chairName || "Auto assigned"}</p>
-                    </>
-                  ) : bookingEstimate?.message ? (
-                    <p style={{ color: "red" }}>{bookingEstimate.message}</p>
-                  ) : bookingType === "scheduled" && !scheduledFor ? (
-                    <p>Select scheduled time to see expected start</p>
-                  ) : null}
+                <div className="customer-book-page__quick-stats">
+                  <article>
+                    <span>Selected</span>
+                    <strong>{selectedServices.length}</strong>
+                  </article>
+                  <article>
+                    <span>Total time</span>
+                    <strong>{selectedTotalTime} min</strong>
+                  </article>
+                  <article>
+                    <span>Chairs</span>
+                    <strong>{activeChairs.length}</strong>
+                  </article>
                 </div>
-              )}
-
-              <div style={{ marginTop: "10px" }}>
-                <label style={{ marginRight: "10px" }}>
-                  <input
-                    type="radio"
-                    name="bookingType"
-                    value="instant"
-                    checked={bookingType === "instant"}
-                    onChange={() => setBookingType("instant")}
-                  />
-                  Instant
-                </label>
-
-                <label>
-                  <input
-                    type="radio"
-                    name="bookingType"
-                    value="scheduled"
-                    checked={bookingType === "scheduled"}
-                    onChange={() => setBookingType("scheduled")}
-                  />
-                  Schedule
-                </label>
               </div>
 
-              {bookingType === "scheduled" && (
-                <>
-                  <input
-                    type="datetime-local"
-                    value={scheduledFor}
-                    min={getLocalDateTimeValue()}
-                    onChange={(e) => setScheduledFor(e.target.value)}
-                    style={{ display: "block", marginTop: "10px" }}
-                  />
+              <div className="customer-book-layout">
+                <div className="customer-service-picker">
+                  <div className="service-card-grid customer-service-grid">
+                    {services.map((service, index) => {
+                      const isSelected = selectedServices.find((item) => item._id === service._id);
 
-                  <select
-                    value={selectedChairId}
-                    onChange={(e) => setSelectedChairId(e.target.value)}
-                    style={{ display: "block", marginTop: "10px" }}
-                  >
-                    <option value="">Select Chair</option>
-                    {activeChairs.map((chair) => (
-                      <option key={chair.id} value={chair.id}>
-                        {chair.name}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              )}
+                      return (
+                        <button
+                          key={service._id}
+                          className={`service-selection-card customer-service-card ${
+                            isSelected ? "service-selection-card--selected customer-service-card--selected" : ""
+                          }`}
+                          onClick={() => toggleService(service)}
+                          style={{ "--service-index": index }}
+                          type="button"
+                        >
+                          <div className="service-selection-card__header">
+                            <h4>{service.name}</h4>
+                            <span className="service-selection-card__price">Rs {service.price}</span>
+                          </div>
+                          <p className="service-selection-card__meta">{service.duration} min service window</p>
+                          <span className="service-selection-card__state">
+                            {isSelected ? "Selected" : "Tap to select"}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
-              {activeCustomerBookings.length > 0 && (
-                <p style={{ color: "red" }}>You already have an active booking</p>
-              )}
+                <div className="editorial-panel editorial-panel--accent customer-book-summary">
+                  <div className="editorial-panel__header">
+                    <p className="customer-shop-discovery__eyebrow">Visit summary</p>
+                    <h3>Booking Summary</h3>
+                    <p>Total Time: {selectedTotalTime} min</p>
+                  </div>
 
-              <button
-                onClick={handleBooking}
-                disabled={bookDisabled}
-                style={{ padding: "10px", marginTop: "10px" }}
-              >
-                Book Selected Services
-              </button>
+                  <div className="customer-book-summary__selection">
+                    {selectedServices.length ? (
+                      selectedServices.map((service) => (
+                        <span key={service._id}>
+                          {service.name} · {service.duration} min
+                        </span>
+                      ))
+                    ) : (
+                      <span>No services selected yet</span>
+                    )}
+                  </div>
 
-              <p>{message}</p>
+                  {selectedServices.length > 0 && (
+                    <div className="booking-estimate-card customer-book-estimate">
+                      {estimateLoading ? (
+                        <p>Checking expected start...</p>
+                      ) : bookingEstimate?.available ? (
+                        <div className="booking-estimate-card__stats">
+                          <p>Expected start: {new Date(bookingEstimate.estimatedStartTime).toLocaleTimeString()}</p>
+                          <p>Waiting: {bookingEstimate.waitMinutes || 0} min</p>
+                          <p>Chair: {bookingEstimate.chairName || "Auto assigned"}</p>
+                        </div>
+                      ) : bookingEstimate?.message ? (
+                        <p className="form-feedback form-feedback--error">{bookingEstimate.message}</p>
+                      ) : bookingType === "scheduled" && !scheduledFor ? (
+                        <p>Select scheduled time to see expected start</p>
+                      ) : null}
+                    </div>
+                  )}
+
+                  <div className="choice-pills customer-book-mode">
+                    <label className={`choice-pill ${bookingType === "instant" ? "choice-pill--active" : ""}`}>
+                      <input
+                        type="radio"
+                        name="bookingType"
+                        value="instant"
+                        checked={bookingType === "instant"}
+                        onChange={() => setBookingType("instant")}
+                      />
+                      Instant
+                    </label>
+
+                    <label className={`choice-pill ${bookingType === "scheduled" ? "choice-pill--active" : ""}`}>
+                      <input
+                        type="radio"
+                        name="bookingType"
+                        value="scheduled"
+                        checked={bookingType === "scheduled"}
+                        onChange={() => setBookingType("scheduled")}
+                      />
+                      Schedule
+                    </label>
+                  </div>
+
+                  {bookingType === "scheduled" && (
+                    <div className="form-grid customer-schedule-grid">
+                      <label className="field-group">
+                        <span>Scheduled For</span>
+                        <input
+                          className="app-field"
+                          type="datetime-local"
+                          value={scheduledFor}
+                          min={getLocalDateTimeValue()}
+                          onChange={(e) => setScheduledFor(e.target.value)}
+                        />
+                      </label>
+
+                      <label className="field-group">
+                        <span>Preferred Chair</span>
+                        <select
+                          className="app-field"
+                          value={selectedChairId}
+                          onChange={(e) => setSelectedChairId(e.target.value)}
+                        >
+                          <option value="">Select Chair</option>
+                          {activeChairs.map((chair) => (
+                            <option key={chair.id} value={chair.id}>
+                              {chair.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  )}
+
+                  {activeCustomerBookings.length > 0 ? (
+                    <p className="form-feedback form-feedback--error">You already have an active booking</p>
+                  ) : null}
+
+                  <div className="form-actions customer-book-actions">
+                    <button className="app-button app-button--primary" onClick={handleBooking} disabled={bookDisabled}>
+                      Book Selected Services
+                    </button>
+                    {message ? <p className="form-feedback">{message}</p> : null}
+                  </div>
+                </div>
+              </div>
             </section>
           )}
 
           {activeSection === "queue" && (
-            <section>
-              <QueueBoard chairs={chairs} bookings={activeBookings} title="Current Queue" />
+            <section className="dashboard-page-section customer-queue-page">
+              <div className="customer-queue-page__intro">
+                <div>
+                  <p className="customer-shop-discovery__eyebrow">Live floor</p>
+                  <h3>Queue Overview</h3>
+                  <p>See how the chairs are moving before you head in, with a live shop-floor view.</p>
+                </div>
+
+                <div className="customer-queue-page__stats">
+                  <article>
+                    <span>Active chairs</span>
+                    <strong>{activeChairs.length}</strong>
+                  </article>
+                  <article>
+                    <span>In service</span>
+                    <strong>{inProgressBookings.length}</strong>
+                  </article>
+                  <article>
+                    <span>Waiting</span>
+                    <strong>{Math.max(0, activeBookings.length - inProgressBookings.length)}</strong>
+                  </article>
+                </div>
+              </div>
+
+              <div className="customer-queue-page__board">
+                <QueueBoard chairs={chairs} bookings={activeBookings} title="Current Queue" />
+              </div>
             </section>
           )}
 
           {activeSection === "active" && (
-            <section>
-              <h3>Your Active Bookings</h3>
+            <section className="dashboard-page-section customer-active-page">
+              <div className="customer-active-page__intro">
+                <div>
+                  <p className="customer-shop-discovery__eyebrow">Visit tracker</p>
+                  <h3>Your Active Bookings</h3>
+                  <p>Track your live slot, wait time, and chair details with a cleaner account view.</p>
+                </div>
+
+                <div className="customer-active-page__stats">
+                  <article>
+                    <span>Active</span>
+                    <strong>{activeCustomerBookings.length}</strong>
+                  </article>
+                  <article>
+                    <span>In progress</span>
+                    <strong>
+                      {activeCustomerBookings.filter((booking) => booking.status === "in-progress").length}
+                    </strong>
+                  </article>
+                  <article>
+                    <span>Waiting</span>
+                    <strong>
+                      {activeCustomerBookings.filter((booking) => booking.status === "booked").length}
+                    </strong>
+                  </article>
+                </div>
+              </div>
 
               {activeCustomerBookings.length === 0 ? (
-                <p>You do not have any active bookings.</p>
+                <div className="customer-active-empty">
+                  <p className="customer-active-empty__eyebrow">No live visit</p>
+                  <h4>You do not have any active bookings.</h4>
+                  <p>Book a service to see your token, chair, wait time, and live status here.</p>
+                </div>
               ) : (
-                activeCustomerBookings.map((booking) => {
+                <div className="customer-active-list">
+                  {activeCustomerBookings.map((booking, index) => {
                   const waitTime = getWaitTime(booking);
+                  const isLive = booking.status === "in-progress";
 
                   return (
                     <div
                       key={booking._id}
-                      style={{
-                        border: "1px solid #ccc",
-                        padding: "10px",
-                        marginBottom: "10px",
-                        borderRadius: "8px"
-                      }}
+                      className={`booking-activity-card customer-active-card ${
+                        isLive ? "customer-active-card--live" : "customer-active-card--waiting"
+                      }`}
+                      style={{ "--active-index": index }}
                     >
-                      <p>
-                        {booking.services.join(", ")} -{" "}
-                        {booking.actualStartTime
-                          ? new Date(booking.actualStartTime).toLocaleTimeString()
-                          : "Waiting"}
-                      </p>
+                      <div className="customer-active-card__header">
+                        <div>
+                          <p className="customer-active-card__eyebrow">
+                            {isLive ? "Now in chair" : "Waiting for chair"}
+                          </p>
+                          <p className="booking-activity-card__headline">
+                            {booking.services.join(", ")} -{" "}
+                            {booking.actualStartTime
+                              ? new Date(booking.actualStartTime).toLocaleTimeString()
+                              : "Waiting"}
+                          </p>
+                        </div>
 
-                      <p>{booking.customerName}</p>
-                      <p>Order: {booking.orderId}</p>
-                      <p>Chair: {booking.chairName || "Auto assigning"}</p>
-                      <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
+                        <span className="customer-active-card__status">
+                          {isLive ? `${waitTime} min left` : `${waitTime} min wait`}
+                        </span>
+                      </div>
+
+                      <div className="customer-active-card__details">
+                        <p>{booking.customerName}</p>
+                        <p>Order: {booking.orderId}</p>
+                        <p>Chair: {booking.chairName || "Auto assigning"}</p>
+                        <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
+                      </div>
 
                       {booking.bookingType === "scheduled" && (
-                        <p>Scheduled: {new Date(booking.startTime).toLocaleString()}</p>
+                        <p className="customer-active-card__scheduled">
+                          Scheduled: {new Date(booking.startTime).toLocaleString()}
+                        </p>
                       )}
 
                       {booking.status === "in-progress" ? (
-                        <p style={{ color: "green" }}>In Progress ({waitTime} min left)</p>
+                        <p className="booking-activity-card__status booking-activity-card__status--live">
+                          In Progress ({waitTime} min left)
+                        </p>
                       ) : (
-                        <p>Waiting: {waitTime} min</p>
+                        <p className="booking-activity-card__status">Waiting: {waitTime} min</p>
                       )}
 
-                      <button onClick={() => cancelBooking(booking._id)}>Cancel</button>
+                      <div className="customer-active-card__actions">
+                        <button className="app-button app-button--secondary" onClick={() => cancelBooking(booking._id)}>
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   );
-                })
+                })}
+                </div>
               )}
             </section>
           )}
 
           {activeSection === "history" && (
-            <section>
-              <h3>Order History</h3>
+            <section className="dashboard-page-section customer-history-page">
+              <div className="customer-history-page__intro">
+                <div>
+                  <p className="customer-shop-discovery__eyebrow">Visit archive</p>
+                  <h3>Order History</h3>
+                  <p>Review completed and cancelled visits with accurate price snapshots and service details.</p>
+                </div>
 
-              <div className="history-filter-bar">
+                <div className="customer-history-page__stats">
+                  <article>
+                    <span>Total</span>
+                    <strong>{customerHistory.length}</strong>
+                  </article>
+                  <article>
+                    <span>Completed</span>
+                    <strong>{customerHistory.filter((booking) => booking.status === "completed").length}</strong>
+                  </article>
+                  <article>
+                    <span>Cancelled</span>
+                    <strong>{customerHistory.filter((booking) => booking.status === "cancelled").length}</strong>
+                  </article>
+                </div>
+              </div>
+
+              <div className="history-filter-bar customer-history-filters">
                 <input
                   className="history-filter-input"
                   placeholder="Search by service or token"
@@ -681,67 +848,110 @@ function Booking({ user: injectedUser, onLogout }) {
               </div>
 
               {customerHistory.length === 0 ? (
-                <p>No completed or cancelled orders yet.</p>
+                <div className="customer-history-empty">
+                  <p className="customer-active-empty__eyebrow">No archived visits</p>
+                  <h4>No completed or cancelled orders yet.</h4>
+                  <p>Your completed visits, cancellations, service snapshots, and totals will appear here.</p>
+                </div>
               ) : filteredCustomerHistory.length === 0 ? (
-                <p>No history results match the current filters.</p>
+                <div className="customer-history-empty">
+                  <p className="customer-active-empty__eyebrow">No matches</p>
+                  <h4>No history results match the current filters.</h4>
+                  <p>Try a different service name, token, status, or date range.</p>
+                </div>
               ) : (
-                filteredCustomerHistory.map((booking) => (
+                <div className="customer-history-list">
+                  {filteredCustomerHistory.map((booking, index) => (
                     <div
                       key={booking._id}
-                      className="history-card"
+                      className={`history-card customer-history-card customer-history-card--${booking.status}`}
+                      style={{ "--history-index": index }}
                     >
-                      <p>
-                        <b>{getBookingServiceNames(booking).join(", ")}</b>
-                      </p>
-                      <p>Order: {booking.orderId}</p>
-                      <p>Chair: {booking.chairName || "Not assigned"}</p>
-                      <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
-                      <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
-                      <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                      <div className="customer-history-card__header">
+                        <div>
+                          <p className="customer-history-card__eyebrow">
+                            {booking.status === "completed" ? "Completed visit" : "Cancelled visit"}
+                          </p>
+                          <p>
+                            <b>{getBookingServiceNames(booking).join(", ")}</b>
+                          </p>
+                        </div>
+                        <span className="customer-history-card__total">
+                          {formatCurrency(getBookingTotalPrice(booking))}
+                        </span>
+                      </div>
+
+                      <div className="customer-history-card__details">
+                        <p>Order: {booking.orderId}</p>
+                        <p>Chair: {booking.chairName || "Not assigned"}</p>
+                        <p>Type: {booking.bookingType === "scheduled" ? "Scheduled" : "Instant"}</p>
+                        <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
+                        <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                      </div>
+
                       {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
-                        <p>
+                        <p className="customer-history-card__snapshot">
                           Snapshot:{" "}
                           {getBookingServiceItems(booking)
                             .map((item) => `${item.name} (${formatCurrency(item.price)})`)
                             .join(", ")}
-                        </p>
+                          </p>
                       )}
-                      <p>{getHistoryLabel(booking)}</p>
+                      <p className="customer-history-card__date">{getHistoryLabel(booking)}</p>
                     </div>
-                  ))
+                  ))}
+                </div>
               )}
             </section>
           )}
 
           {activeSection === "profile" && (
-            <section>
-              <h3>Your Loyalty Profile</h3>
+            <section className="dashboard-page-section customer-profile-page">
+              <div className="customer-profile-page__intro">
+                <div>
+                  <p className="customer-shop-discovery__eyebrow">Loyalty profile</p>
+                  <h3>Your Loyalty Profile</h3>
+                  <p>See your spend, visits, favorite services, and recent loyalty activity in one premium account view.</p>
+                </div>
+
+                <div className="customer-profile-page__badge">
+                  <span className={getBadgeClassName(customerProfile.badge)}>
+                    {customerProfile.badge}
+                  </span>
+                  <strong>{customerProfile.visitCount || 0} visits</strong>
+                  <small>{formatCurrency(customerProfile.totalSpend || 0)} total spend</small>
+                </div>
+              </div>
 
               {profileLoading ? (
-                <p>Loading your profile...</p>
+                <div className="customer-history-empty">
+                  <p className="customer-active-empty__eyebrow">Loading</p>
+                  <h4>Loading your profile...</h4>
+                  <p>We are refreshing your loyalty details for this shop.</p>
+                </div>
               ) : (
                 <>
-                  <div className="loyalty-grid">
-                    <article className="loyalty-card">
+                  <div className="loyalty-grid customer-profile-grid">
+                    <article className="loyalty-card customer-profile-card">
                       <p className="loyalty-card__label">Badge</p>
                       <span className={getBadgeClassName(customerProfile.badge)}>
                         {customerProfile.badge}
                       </span>
                     </article>
 
-                    <article className="loyalty-card">
+                    <article className="loyalty-card customer-profile-card">
                       <p className="loyalty-card__label">Visit Count</p>
                       <strong className="loyalty-card__value">{customerProfile.visitCount}</strong>
                     </article>
 
-                    <article className="loyalty-card">
+                    <article className="loyalty-card customer-profile-card">
                       <p className="loyalty-card__label">Total Spend</p>
                       <strong className="loyalty-card__value">
                         {formatCurrency(customerProfile.totalSpend)}
                       </strong>
                     </article>
 
-                    <article className="loyalty-card">
+                    <article className="loyalty-card customer-profile-card">
                       <p className="loyalty-card__label">Favorite Service</p>
                       <strong className="loyalty-card__value">
                         {customerProfile.topService || "No visits yet"}
@@ -749,8 +959,8 @@ function Booking({ user: injectedUser, onLogout }) {
                     </article>
                   </div>
 
-                  <div className="analytics-panels">
-                    <article className="analytics-panel">
+                  <div className="analytics-panels customer-profile-panels">
+                    <article className="analytics-panel customer-profile-panel">
                       <div className="analytics-panel__header">
                         <h3>Favorite Services</h3>
                         <p>Your most-booked services with this barber.</p>
@@ -783,34 +993,47 @@ function Booking({ user: injectedUser, onLogout }) {
                       )}
                     </article>
 
-                    <article className="analytics-panel">
+                    <article className="analytics-panel customer-profile-panel">
                       <div className="analytics-panel__header">
                         <h3>Recent Loyalty History</h3>
                         <p>Your latest completed and cancelled bookings with this barber.</p>
                       </div>
 
                       {customerProfile.recentBookings?.length ? (
-                        customerProfile.recentBookings.map((booking) => (
-                          <div key={booking._id} className="history-card">
-                            <p>
-                              <b>{getBookingServiceNames(booking).join(", ")}</b>
-                            </p>
-                            <p>Order: {booking.orderId}</p>
-                            <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
-                            <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
-                            {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
+                        customerProfile.recentBookings.map((booking, index) => (
+                          <div
+                            key={booking._id}
+                            className={`history-card customer-profile-recent-card customer-profile-recent-card--${booking.status}`}
+                            style={{ "--recent-index": index }}
+                          >
+                            <div className="customer-profile-recent-card__header">
                               <p>
+                                <b>{getBookingServiceNames(booking).join(", ")}</b>
+                              </p>
+                              <span>{booking.status === "completed" ? "Completed" : "Cancelled"}</span>
+                            </div>
+                            <div className="customer-profile-recent-card__details">
+                              <p>Order: {booking.orderId}</p>
+                              <p>Status: {booking.status === "completed" ? "Completed" : "Cancelled"}</p>
+                              <p>Total: {formatCurrency(getBookingTotalPrice(booking))}</p>
+                            </div>
+                            {Array.isArray(booking.serviceItems) && booking.serviceItems.length > 0 && (
+                              <p className="customer-history-card__snapshot">
                                 Snapshot:{" "}
                                 {getBookingServiceItems(booking)
                                   .map((item) => `${item.name} (${formatCurrency(item.price)})`)
                                   .join(", ")}
                               </p>
                             )}
-                            <p>{getHistoryLabel(booking)}</p>
+                            <p className="customer-history-card__date">{getHistoryLabel(booking)}</p>
                           </div>
                         ))
                       ) : (
-                        <p>Your completed and cancelled visits will appear here.</p>
+                        <div className="customer-history-empty">
+                          <p className="customer-active-empty__eyebrow">No recent visits</p>
+                          <h4>Your completed and cancelled visits will appear here.</h4>
+                          <p>Book and complete a visit to start building loyalty history.</p>
+                        </div>
                       )}
                     </article>
                   </div>

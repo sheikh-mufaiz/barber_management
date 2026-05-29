@@ -3,5 +3,6 @@ import App from "./App";
 
 test("renders login screen by default", () => {
   render(<App />);
-  expect(screen.getByText(/go to register/i)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /sign up/i })).toBeInTheDocument();
+  expect(screen.getByText(/sign in to your workspace/i)).toBeInTheDocument();
 });

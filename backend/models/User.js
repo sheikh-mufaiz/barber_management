@@ -1,5 +1,15 @@
 const mongoose = require("mongoose");
 const chairSchema = require("./Chair");
+const shopSessionSchema = new mongoose.Schema(
+  {
+    openedAt: Date,
+    closedAt: {
+      type: Date,
+      default: null
+    }
+  },
+  { _id: false }
+);
 
 const userSchema = new mongoose.Schema({
   name: String,
@@ -16,6 +26,14 @@ const userSchema = new mongoose.Schema({
   },
   address: String,
   isOpen: { type: Boolean, default: true },
+  shopSessions: {
+    type: [shopSessionSchema],
+    default: []
+  },
+  lastOpenChairIds: {
+    type: [String],
+    default: []
+  },
   chairs: {
     type: [chairSchema],
     default: [{ id: "chair-1", name: "Chair 1", isActive: true }]

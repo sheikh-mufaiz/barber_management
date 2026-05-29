@@ -17,9 +17,21 @@ const {
   getBookingTotalPrice,
   validateBookingServiceSnapshot
 } = require("../utils/bookingSnapshots");
+const auth = require("../middleware/auth");
+
+const isBarberOwner = (req, barberId) =>
+  req.user?.role === "barber" && String(req.user.id) === String(barberId);
+
+const isCustomerOwner = (req, customerId) =>
+  req.user?.role === "customer" && String(req.user.id) === String(customerId);
+
+const forbidden = (res, message = "You are not allowed to access this resource") =>
+  res.status(403).json({ error: "Forbidden", message });
+
+const getErrorMessage = (error) => error?.message || "Server error";
 
 // 🔥 ESTIMATE BOOKING (NO SAVE)
-router.post("/estimate-booking", async (req, res) => {
+router.post("/estimate-booking", auth, async (req, res) => {
   try {
     const {
       barberId,
@@ -29,8 +41,11 @@ router.post("/estimate-booking", async (req, res) => {
       chairId
     } = req.body;
 
-    if (!barberId || !totalTime) {
+    const numericTotalTime = Number(totalTime);
+
+    if (!barberId || !Number.isFinite(numericTotalTime) || numericTotalTime <= 0) {
       return res.status(400).json({
+        error: "Invalid booking",
         available: false,
         message: "Missing required fields"
       });
@@ -38,7 +53,7 @@ router.post("/estimate-booking", async (req, res) => {
 
     const estimate = await estimateBookingForBarber({
       barberId,
-      totalTime,
+      totalTime: numericTotalTime,
       bookingType,
       scheduledFor,
       requestedChairId: bookingType === "scheduled" ? chairId : null
@@ -48,14 +63,15 @@ router.post("/estimate-booking", async (req, res) => {
 
   } catch (error) {
     res.status(500).json({
+      error: "Server error",
       available: false,
-      error: error.message
+      message: getErrorMessage(error)
     });
   }
 });
 
 // 🔥 CREATE BOOKING (AUTO TIME SLOT)
-router.post("/book", async (req, res) => {
+router.post("/book", auth, async (req, res) => {
   try {
     const {
       barberId,
@@ -73,17 +89,35 @@ router.post("/book", async (req, res) => {
       bookingType === "scheduled" ? "scheduled" : "instant";
     const requestedScheduleTime = scheduledFor ? new Date(scheduledFor) : null;
     const requestedServices = Array.isArray(services) ? services : [];
+    const numericTotalTime = Number(totalTime);
 
     // ✅ VALIDATION (FIXED)
     if (!barberId || (!customerId && !isOffline)) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: "Missing required fields"
       });
     }
 
+    if (isOffline) {
+      if (!isBarberOwner(req, barberId)) {
+        return forbidden(res, "Only the shop owner can add walk-ins");
+      }
+    } else if (!isCustomerOwner(req, customerId)) {
+      return forbidden(res, "Customers can only create bookings for themselves");
+    }
+
     if (!requestedServices.length) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: "Select at least one service"
+      });
+    }
+
+    if (!Number.isFinite(numericTotalTime) || numericTotalTime <= 0) {
+      return res.status(400).json({
+        error: "Invalid booking",
+        message: "Total time must be greater than zero"
       });
     }
 
@@ -92,6 +126,7 @@ router.post("/book", async (req, res) => {
       (!requestedScheduleTime || isNaN(requestedScheduleTime.getTime()))
     ) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: "Please select a valid scheduled time"
       });
     }
@@ -101,6 +136,7 @@ router.post("/book", async (req, res) => {
       requestedScheduleTime <= new Date()
     ) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: "Scheduled time must be in the future"
       });
     }
@@ -114,6 +150,7 @@ router.post("/book", async (req, res) => {
       });
       if (existingBooking) {
         return res.status(400).json({
+          error: "Active booking exists",
           message: "You already have an active booking with this barber"
         });
       }
@@ -121,7 +158,7 @@ router.post("/book", async (req, res) => {
 
     const estimate = await estimateBookingForBarber({
       barberId,
-      totalTime,
+      totalTime: numericTotalTime,
       bookingType: normalizedBookingType,
       scheduledFor: requestedScheduleTime,
       requestedChairId:
@@ -130,6 +167,7 @@ router.post("/book", async (req, res) => {
 
     if (!estimate.available) {
       return res.status(409).json({
+        error: "Slot unavailable",
         message: estimate.message || "No slot available right now"
       });
     }
@@ -149,6 +187,7 @@ router.post("/book", async (req, res) => {
 
     if (snapshotValidation.hasMissingServices) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: `Unknown services: ${snapshotValidation.missingServices.join(", ")}`
       });
     }
@@ -162,6 +201,7 @@ router.post("/book", async (req, res) => {
 
     if (!normalizedTotalTime) {
       return res.status(400).json({
+        error: "Invalid booking",
         message: "Total time must be greater than zero"
       });
     }
@@ -201,12 +241,16 @@ router.post("/book", async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
-router.get("/customer-profile/:barberId/:customerId", async (req, res) => {
+router.get("/customer-profile/:barberId/:customerId", auth, async (req, res) => {
   try {
+    if (!isBarberOwner(req, req.params.barberId) && !isCustomerOwner(req, req.params.customerId)) {
+      return forbidden(res);
+    }
+
     const profile = await getCustomerProfile({
       barberId: req.params.barberId,
       customerId: req.params.customerId
@@ -214,25 +258,33 @@ router.get("/customer-profile/:barberId/:customerId", async (req, res) => {
 
     res.json(profile);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
-router.get("/customer-profiles/:barberId", async (req, res) => {
+router.get("/customer-profiles/:barberId", auth, async (req, res) => {
   try {
+    if (!isBarberOwner(req, req.params.barberId)) {
+      return forbidden(res, "Only the shop owner can view all customer profiles");
+    }
+
     const profiles = await getCustomerProfilesForBarber({
       barberId: req.params.barberId
     });
 
     res.json(profiles);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
-router.get("/analytics/overview", async (req, res) => {
+router.get("/analytics/overview", auth, async (req, res) => {
   try {
     const { barberId, rangePreset = "today", startDate, endDate } = req.query;
+
+    if (!isBarberOwner(req, barberId)) {
+      return forbidden(res, "Only the shop owner can view analytics");
+    }
 
     const overview = await getAnalyticsOverview({
       barberId,
@@ -250,60 +302,59 @@ router.get("/analytics/overview", async (req, res) => {
         ? 400
         : 500;
 
-    res.status(statusCode).json({ error: error.message });
+    res.status(statusCode).json({ error: getErrorMessage(error), message: getErrorMessage(error) });
   }
 });
 
 
 // 🔥 GET ALL BOOKINGS
-router.get("/bookings", async (req, res) => {
+router.get("/bookings", auth, async (req, res) => {
   try {
-    const bookings = await Booking.find().sort({ startTime: 1 });
+    const query = {};
+
+    if (req.user.role === "barber") {
+      query.barberId = String(req.query.barberId || req.user.id);
+
+      if (String(query.barberId) !== String(req.user.id)) {
+        return forbidden(res, "Barbers can only view their own bookings");
+      }
+    } else if (req.user.role === "customer") {
+      if (req.query.barberId) {
+        query.barberId = String(req.query.barberId);
+      } else {
+        query.customerId = String(req.user.id);
+      }
+    }
+
+    const bookings = await Booking.find(query).sort({ startTime: 1 });
     res.json(bookings);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
 
 // 🔥 CANCEL BOOKING (SECURE + SHIFT)
-router.delete("/cancel/:id", async (req, res) => {
+router.delete("/cancel/:id", auth, async (req, res) => {
   try {
     const bookingId = req.params.id;
-    const { userId, role } = req.body;
 
     const booking = await Booking.findById(bookingId);
 
     if (!booking) {
       return res.status(404).json({
+        error: "Not found",
         message: "Booking not found"
       });
     }
 
-    // 🔥 CUSTOMER → only own booking (SAFE CHECK)
-    if (
-      role === "customer" &&
-      booking.customerId &&
-      booking.customerId !== userId
-    ) {
-      return res.status(403).json({
-        message: "You can only cancel your own booking ❌"
-      });
-    }
-
-    // 🔥 BARBER → only own shop
-    if (
-      role === "barber" &&
-      booking.barberId.toString() !== userId
-    ) {
-      return res.status(403).json({
-        message: "Not your shop booking ❌"
-      });
+    if (!isBarberOwner(req, booking.barberId) && !isCustomerOwner(req, booking.customerId)) {
+      return forbidden(res, "You can only cancel bookings that belong to you");
     }
 
     booking.status = "cancelled";
     booking.cancelledAt = new Date();
-    booking.cancelledBy = role || "unknown";
+    booking.cancelledBy = req.user.role || "unknown";
     await booking.save();
 
     await recalculateQueueForBarber(booking.barberId);
@@ -313,30 +364,27 @@ router.delete("/cancel/:id", async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
 
 // 🔥 COMPLETE BOOKING (ONLY BARBER)
-router.put("/complete/:id", async (req, res) => {
+router.put("/complete/:id", auth, async (req, res) => {
   try {
     const bookingId = req.params.id;
-    const { userId } = req.body;
 
     const booking = await Booking.findById(bookingId);
 
     if (!booking) {
       return res.status(404).json({
+        error: "Not found",
         message: "Booking not found"
       });
     }
 
-    // 🔥 SECURITY FIX
-    if (booking.barberId.toString() !== userId) {
-      return res.status(403).json({
-        message: "Only barber can complete booking ❌"
-      });
+    if (!isBarberOwner(req, booking.barberId)) {
+      return forbidden(res, "Only the shop owner can complete bookings");
     }
 
     booking.status = "completed";
@@ -350,18 +398,22 @@ router.put("/complete/:id", async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(error) });
   }
 });
 
 
 // ✅ START BOOKING
-router.put("/start/:id", async (req, res) => {
+router.put("/start/:id", auth, async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
       return res.status(404).json({ success: false });
+    }
+
+    if (!isBarberOwner(req, booking.barberId)) {
+      return forbidden(res, "Only the shop owner can start bookings");
     }
 
     // 🔥 FORCE update
@@ -373,8 +425,6 @@ router.put("/start/:id", async (req, res) => {
 
     const updatedBooking = await Booking.findById(req.params.id);
 
-    console.log("START SAVED:", booking.actualStartTime); // ✅ DEBUG
-
     res.json({
       success: true,
       booking: updatedBooking || booking,
@@ -382,25 +432,29 @@ router.put("/start/:id", async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ success: false });
+    res.status(500).json({ error: "Server error", message: getErrorMessage(err), success: false });
   }
 });
 
-router.delete("/delete-service/:id", async (req, res) => {
+router.delete("/delete-service/:id", auth, async (req, res) => {
   try {
-    console.log("DELETE ID:", req.params.id);
+    const service = await Service.findById(req.params.id);
 
-    const deleted = await Service.findByIdAndDelete(req.params.id);
-
-    if (!deleted) {
-      return res.status(404).json({ message: "Not found" });
+    if (!service) {
+      return res.status(404).json({ error: "Not found", message: "Not found" });
     }
+
+    if (!isBarberOwner(req, service.barberId)) {
+      return forbidden(res, "You can only delete your own services");
+    }
+
+    await Service.findByIdAndDelete(req.params.id);
 
     res.json({ success: true });
 
   } catch (err) {
-    console.error("DELETE ERROR:", err); // 🔥 THIS WILL SHOW REAL ERROR
-    res.status(500).json({ error: err.message });
+    console.error("DELETE ERROR:", err);
+    res.status(500).json({ error: "Server error", message: getErrorMessage(err) });
   }
 });
 // ✅ EXPORT

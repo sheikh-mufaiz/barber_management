@@ -1,22 +1,24 @@
 const jwt = require("jsonwebtoken");
 
-const SECRET = process.env.JWT_SECRET;
+const getJwtSecret = () => process.env.JWT_SECRET || "dev-secret-change-me";
+
 const auth = (req, res, next) => {
   try {
-    const token = req.header("Authorization");
+    const header = req.header("Authorization") || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : header;
 
     if (!token) {
-      return res.status(401).json({ message: "No token ❌" });
+      return res.status(401).json({ error: "Authentication required", message: "No token provided" });
     }
 
-    const decoded = jwt.verify(token, SECRET);
+    const decoded = jwt.verify(token, getJwtSecret());
 
-    req.user = decoded; // { id, role }
+    req.user = decoded;
 
     next();
 
   } catch (err) {
-    return res.status(401).json({ message: "Invalid token ❌" });
+    return res.status(401).json({ error: "Authentication required", message: "Invalid token" });
   }
 };
 

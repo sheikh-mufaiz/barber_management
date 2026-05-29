@@ -196,7 +196,10 @@ function QueueBoard({ chairs = [], bookings = [], title = "Live Queue" }) {
             const currentBooking = nowServing || readyBooking;
 
             return (
-              <article className="queue-card" key={chair.id}>
+              <article
+                className={`queue-card ${currentBooking ? "queue-card--occupied" : "queue-card--available"}`}
+                key={chair.id}
+              >
                 <div className="queue-card__top">
                   <div>
                     <p className="queue-chair-label">{chair.name}</p>
