@@ -1,4 +1,4 @@
-# Que Man
+# Barber Management
 
 ## Local Setup
 
